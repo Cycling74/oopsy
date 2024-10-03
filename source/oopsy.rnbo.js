@@ -1,14 +1,15 @@
 #!/usr/bin/env node
 
 /*
-	Generates and compiles wrapper code for gen~ export to Daisy hardware
+	Generates and compiles wrapper code for rnbo~ export to Daisy hardware
 
-	Oopsy was authored by Graham Wakefield in 2020-2021.
+	Oopsy was authored by Graham Wakefield in 2020-2021 
+	and adapted for RNBO by Stefan Brunner in 2024
 
 	Main entry-point is `run(...args)`
 
 	Args are a command-line style argument list, see `help` below
-	At minimum they should include at least one path to a .cpp file exported from gen~
+	At minimum they should include at least one path to a .cpp file exported from rnbo~
 
 	`run`:
 	- parses these args
@@ -20,14 +21,14 @@
 	- invokes arm-gcc to compile .cpp to binary, then dfu-util to upload to daisy
 
 	`analyze_cpp`:
-	- defines a "gen" data structure representing features in the gen patcher
+	- defines a "rnbo" data structure representing features in the rnbo patcher
 
 	`generate_app`:
 	- configure an "daisy" object representing features in the hardware
-	- configure a "gen" object representing features in the .cpp patch
+	- configure a "rnbo" object representing features in the .cpp patch
 
 	The general idea here is that there is a list of named "nodes" making a graph
-	most nodes are sources,
+	most nodes are sources, 
 		they may have a list of `to` destinations
 		they may have a `src` field naming another node they map from
 	some nodes are sinks, and have a list of 'from' sources
@@ -39,6 +40,8 @@ const fs = require("fs"),
 	assert = require("assert");
 const {exec, execSync, spawn} = require("child_process");
 const { posixify_path, interpolate, asCppNumber, checkBuildEnvironment, help } = require("./oopsy.shared.js");
+
+const [ build_tools_path, has_dfu_util ] = checkBuildEnvironment();
 
 let watchers = []
 
@@ -62,7 +65,7 @@ function run() {
 	let options = {}
 
 	checkBuildEnvironment();
-
+	
 	if (args.length == 0) {
 		console.log(help)
 		return;
@@ -88,9 +91,9 @@ function run() {
 
 			case "watch": watch=true; break;
 
-			case "96kHz":
-			case "48kHz":
-			case "32kHz": samplerate = +(arg.match(/(\d+)kHz/)[1]); break;
+			case "96kHz": 
+			case "48kHz": 
+			case "32kHz": samplerate = +(arg.match(/(\d+)kHz/)[1]); break; 
 
 			case "block1":
 			case "block2":
@@ -101,15 +104,16 @@ function run() {
 			case "block16":
 			case "block24":
 			case "block32":
-			case "block48":
-			case "block64":
-			case "block96":
+			case "block48": 
+			case "block64": 
+			case "block96": 
 			case "block128":
+			case "block512":
 			case "block256": blocksize = +(arg.match(/block(\d+)/)[1]); break;
 
 			case "writejson":
-			case "nooled":
-			case "boost":
+			case "nooled": 
+			case "boost": 
 			case "fastmath": options[arg] = true; break;
 
 			default: {
@@ -121,13 +125,14 @@ function run() {
 				if (fs.lstatSync(arg).isDirectory()) {
 					// add a whole folder full of cpps:
 					cpps = cpps.concat(fs.readdirSync(arg)
-						.filter(s => path.parse(s).ext == ".cpp")
+						.filter(s => path.parse(s).ext == ".cpp") 
 						.map(s => path.join(arg, s))
 					)
-				} else {
+				} else {	
 					let p = path.parse(arg);
 					switch(p.ext) {
 						case ".json": {target_path = arg; target = ""}; break;
+						case ".h":
 						case ".cpp": cpps.push(arg); break;
 						// case ".gendsp":
 						// case ".maxpat":
@@ -219,7 +224,7 @@ function run() {
 				let component = hardware.components[comp];
 				// meta-elements are handled separately
 				if (component.meta) {
-
+					
 				} else {
 					// else it is available for gen mapping:
 
@@ -290,10 +295,12 @@ function run() {
 		cpps.length = hardware.max_apps
 	}
 	let apps = cpps.map(cpp_path => {
-		assert(fs.existsSync(cpp_path), `couldn't find source C++ file ${cpp_path}`);
+		var basepath = path.dirname(cpp_path);
+		var descfile = path.join(basepath, "description.json")
+		assert(fs.existsSync(descfile), `couldn't find description file ${descfile}`);
 		return {
 			path: cpp_path,
-			patch: analyze_cpp(fs.readFileSync(cpp_path, "utf8"), hardware, cpp_path)
+			patch: analyze_json(fs.readFileSync(descfile, "utf8"), hardware, descfile)
 		}
 	})
 	let build_name = apps.map(v=>v.patch.name).join("_")
@@ -304,6 +311,13 @@ function run() {
 	console.log(`Building to ${build_path}`)
 	// ensure build path exists:
 	fs.mkdirSync(build_path, {recursive: true});
+
+	// now move the actual RNBO lib sources to the build path)
+	var rnboLibPath = path.join(build_path, "common"); 
+	if (apps.length) {
+		fs.rmSync(rnboLibPath, { force: true, recursive: true });
+		fs.renameSync(path.join(path.dirname(apps[0].path), "common"), rnboLibPath);
+	}
 
 	let config = {
 		build_name: build_name,
@@ -353,13 +367,14 @@ function run() {
 	const includes = hardware.includes.map(
 		item => `-I"${posixify_path(path.relative(build_path, item))}"`);
 
-	fs.writeFileSync(makefile_path, `
+		fs.writeFileSync(makefile_path, `
 # Project Name
 TARGET = ${build_name}
 # App type
 APP_TYPE = ${hardware.app_type}
 # Sources -- note, won't work with paths with spaces
-CPP_SOURCES = ${posixify_path(path.relative(build_path, maincpp_path).replace(" ", "\\ "))} \\
+CPP_SOURCES = ${posixify_path(path.relative(build_path, maincpp_path).replace(" ", "\\ "))}
+C_SOURCES = ../tlsf.c
 ${posixify_path(path.relative(build_path, path.join(__dirname, "petal_sm", "daisy_petal_125b_sm.cpp")))}
 ${includes.length > 0 ? `C_INCLUDES = ${includes.join('\\\n')}` : ``}
 # Library Locations
@@ -370,8 +385,8 @@ OPT = -O3
 # Core location, and generic Makefile.
 SYSTEM_FILES_DIR = $(LIBDAISY_DIR)/core
 include $(SYSTEM_FILES_DIR)/Makefile
-# Include the gen_dsp files
-CFLAGS+=-I"${posixify_path(path.relative(build_path, path.join(__dirname, "gen_dsp")))}" \\
+# Include the rnbo lib
+CFLAGS+=-I"${posixify_path(path.relative(build_path, rnboLibPath))}"
 -I${posixify_path(path.relative(build_path, path.join(__dirname, "petal_sm")))}
 # Silence irritating warnings:
 CFLAGS+=-O3 -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable
@@ -383,7 +398,7 @@ CPPFLAGS+=-O3 -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-var
 	console.log(`\t${maincpp_path}`)
 	console.log(`\t${makefile_path}`)
 	console.log(`\t${bin_path}`)
-
+	
 	// add watcher
 	if (watch && watchers.length < 1) {
 		watchers = cpps.map(cpp_path => fs.watch(cpp_path, (event, filepath)=>{
@@ -400,11 +415,11 @@ CPPFLAGS+=-O3 -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-var
 	//if (options.writejson) fs.writeFileSync(path.join(build_path, `${build_name}_${target}.json`), JSON.stringify(config,null,"  "),"utf8");
 
 	const cppcode = `
-/*
+/* 
 
 This code was generated by Oopsy (https://github.com/electro-smith/oopsy) on ${new Date().toString()}
 
-Oopsy was authored in 2020-2021 by Graham Wakefield.  Copyright 2021 Electrosmith, Corp. and Graham Wakefield.
+Oopsy was authored in 2020-2021 by Graham Wakefield and adapted to RNBO by Stefan Brunner.  Copyright 2021 Electrosmith, Corp., Graham Wakefield and Stefan Brunner.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 
@@ -413,7 +428,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 /*
-	For details of the licensing terms of code exported from gen~ see https://support.cycling74.com/hc/en-us/articles/360050779193-Gen-Code-Export-Licensing-FAQ
+	For details of the licensing terms of code exported from RNBO see https://support.cycling74.com/hc/en-us/articles/10730637742483-RNBO-Export-Licensing-FAQ
 */
 ${Object.keys(hardware.defines).map(k=>`
 #define ${k} (${hardware.defines[k]})`).join("")}
@@ -422,8 +437,13 @@ ${hardware.struct}
 using json2daisy::Daisy;
 
 ${hardware.inserts.filter(o => o.where == "header").map(o => o.code).join("\n")}
-#include "../genlib_daisy.h"
-#include "../genlib_daisy.cpp"
+
+#define RNBO_USE_FLOAT32
+#define RNBO_NOTHROW
+#define RNBO_FIXEDLISTSIZE 64
+#define RNBO_USECUSTOMALLOCATOR
+
+#include "../rnbo_daisy.h"
 
 ${apps.map(app => `#include "${posixify_path(path.relative(build_path, app.path))}"`).join("\n")}
 ${apps.map(app => app.cpp.struct).join("\n")}
@@ -446,7 +466,7 @@ int main(void) {
 	return oopsy::daisy.run(appdefs, ${apps.length});
 }
 `
-	fs.writeFileSync(maincpp_path, cppcode, "utf-8");
+	fs.writeFileSync(maincpp_path, cppcode, "utf-8");	
 
 	console.log("oopsy generated code")
 
@@ -468,7 +488,7 @@ int main(void) {
 			// if successful, try to upload to hardware:
 			if (has_dfu_util && action=="upload") {
 				console.log("oopsy flashing...")
-
+				
 				exec(`make program-dfu`, { cwd: build_path }, (err, stdout, stderr)=>{
 					console.log("stdout", stdout)
 					console.log("stderr", stderr)
@@ -531,153 +551,48 @@ int main(void) {
 	}
 }
 
-function analyze_cpp(cpp, hardware, cpp_path) {
-
-	// helper function to parse initializers:
-	function constexpr(s) {
-		return eval(s
-			// remove any (int) or (t_sample) casts
-			.replace("(int)", "")
-			.replace("(t_sample)", "")
-			// then replace any samplerate or vectorsize constants
-			.replace("samplerate", hardware.defines.OOPSY_SAMPLERATE)
-			.replace("vectorsize", hardware.defines.OOPSY_BLOCK_SIZE)
-			// remove extraneous whitespace
-			.trim()
-			// then compute the result via eval
-		)
-	}
-
-	let gen = {
-		name: /namespace\s+(\w+)\s+{/gm.exec(cpp)[1],
-		ins: (/gen_kernel_innames\[\]\s=\s{\s([^}]*)/g).exec(cpp)[1].split(",").map(s => s.replace(/"/g, "").trim()),
-		outs: (/gen_kernel_outnames\[\]\s=\s{\s([^}]*)/g).exec(cpp)[1].split(",").map(s => s.replace(/"/g, "").trim()),
+function analyze_json(jsonstr, hardware, desc_path) 
+{
+	let desc = JSON.parse(jsonstr);
+	let rnbo = {
+		name: desc.meta.rnboobjname,
+		ins: [],
+		outs: [],
 		params: [],
-		datas: [],
+		datas: []
+	};
 
-		// search for history outs:
-		// i.e. any history with "_out" on its name
-		histories: (cpp.match(/t_sample\s+(m_([\w]+)_out_\d+);/gm) || []).map(s=>{
-
-			const match = /t_sample\s+(m_([\w]+)_out_\d+);/gm.exec(s);
-			let cname = match[1]
-			let name = match[2];
-			let result = {
-				cname: cname,
-				name: name,
-			}
-
-			// if this is a midi output, decode the features
-			let midimatch
-			if (midimatch = /midi_note(\d*)(_(pitch|vel|press|chan))?/g.exec(name) ) {
-				result.midi_type = "note";
-				result.midi_num = midimatch[1] !== "" && midimatch[1] !== undefined ? +midimatch[1] : 1;
-				result.midi_notetype = midimatch[3] || "pitch"
-			} else
-			if (midimatch = /midi_(program|cc|vel|drum)(\d*)(_ch(\d+))?/g.exec(name)) {
-				result.midi_type = midimatch[1];
-				result.midi_num = midimatch[2] !== "" && midimatch[2] !== undefined ? +midimatch[2] : 1;
-				result.midi_chan = +midimatch[4] || 1;
-			} else
-			if (midimatch = /midi_(bend|press)(_ch(\d+))?/g.exec(name)) {
-				result.midi_type = midimatch[1];
-				result.midi_chan = +midimatch[3] || 1;
-			} else
-			if (midimatch = /midi_(clock|stop|start|continue|sense|reset)?/g.exec(name)) {
-				result.midi_type = midimatch[1];
-			}
-
-			// find the initializer:
-			result.default = constexpr( new RegExp(`\\s${cname}\\s+=\\s+([^;]+);`, "gm").exec(cpp)[1] );
-
-			return result;
-		}),
-	}
-
-	let paramdefinitions = (cpp.match(/pi = self->__commonstate.params([^\/]+)/gm) || []);
-	paramdefinitions.forEach((s)=>{
-		let type = /pi->paramtype\s+=\s+([^;]+)/gm.exec(s)[1];
-		let param = {
-			name: /pi->name\s+=\s+"([^"]+)/gm.exec(s)[1],
-			cindex: /commonstate.params\s+\+\s+(\d+)/gm.exec(s)[1],
-			cname: null,
+	desc.inlets.forEach(inlet => {
+		if (inlet.type == "signal") {
+			rnbo.ins.push(inlet.tag);
 		}
-		if (type == "GENLIB_PARAMTYPE_FLOAT") {
-			param.cname = /pi->defaultvalue\s+=\s+self->([^;]+)/gm.exec(s)[1];
-			param.min = +(/pi->outputmin\s+=\s+([^;]+)/gm.exec(s)[1])
-			param.max = +(/pi->outputmax\s+=\s+([^;]+)/gm.exec(s)[1])
-			//param.default = +new RegExp(`\\s${param.cname}\\s+=\\s+\\(\\(\\w+\\)([^\\)]+)`, "gm").exec(cpp)[1]
-			param.default = +new RegExp(`\\s${param.cname}\\s+=[^\\d\\.-]*([\\d\\.-]+)`, "gm").exec(cpp)[1]
-			gen.params.push(param)
-			// enable display of params:
-			if (hardware.defines.OOPSY_TARGET_HAS_OLED) hardware.defines.OOPSY_HAS_PARAM_VIEW = 1;
-		} else if (type == "GENLIB_PARAMTYPE_SYM") {
-			/*
-				General form:
-				m_huge_7.reset("huge", <constexpr>, <constexpr>);
-
-				Some possible variant forms of <constexpr>:
-				// (note: same format can appear in length and channels clauses)
-				m_huge_7.reset("huge", ((int)16384), ((int)1));
-				m_huge_7.reset("huge", samplerate, ((int)1));
-				m_huge_7.reset("huge", (samplerate * 2), ((int)1));
-				m_huge_7.reset("huge", ((t_sample)3.1415926535898), ((int)1));
-				m_huge_7.reset("huge", (3.1415926535898 * 10), ((int)1));
-				m_huge_7.reset("huge", (vectorsize * 8), ((int)1));
-				m_huge_7.reset("huge", ((16 * 16) * 4096), ((int)1));
-
-				Ignore any (int) or (t_sample)
-				Replace any samplerate or vectorsize
-				Compute any math
-
-				\s([\w]+)\.reset\("huge",\s+\(\(int\)(\d+)\), \(\(int\)(\d+)\)\);
-
-
-				\s([\w]+)\.reset\("huge",\s+[^,]+,\s+[^,]+);
-			*/
-
-			//let pat = `\\s([\\w]+)\\.reset\\("${param.name}",\\s+\\(\\(int\\)(\\d+)\\), \\(\\(int\\)(\\d+)\\)\\);`;
-			let pat = `\\s([\\w]+)\\.reset\\("${param.name}",([^;]+);`
-			let match = new RegExp(pat, 'gm').exec(cpp)
-			if (match) {
-				param.cname = match[1]
-				// for the length & channel arguments:
-				// first trim of the trailing ")"
-				// then split by the comma to [length, channel]
-				// then apply a series of replacements and finally eval() the result
-				let args = match[2].slice(0, -1).split(",").map(s => constexpr(s))
-
-				assert(typeof args[0] == "number" && args[0] > 0, `failed to derive length of data ${param.name}`)
-				assert(typeof args[1] == "number" && args[0] > 0, `failed to derive channels of data ${param.name}`)
-
-				param.dim = Math.round(args[0])
-				param.chans = Math.round(args[1])
-				gen.datas.push(param)
-
-				let wavname
-				let wavmatch = /(\w+)_wav$/g.exec(param.name)
-				if (wavmatch) {
-					wavname = wavmatch[1]+".wav";
-				} else {
-					let wavpath = path.join(cpp_path, "..", param.name+".wav")
-					if (fs.existsSync(wavpath)) {
-						console.log(`[data ${param.name}] has possible source: ${path.resolve( wavpath )}`)
-						wavname = param.name+".wav";
-						//wavpath = path.resolve( wavpath )
-					}
-				}
-				if (wavname) {
-					param.wavname = wavname
-					// mark hardware accordingly:
-					hardware.defines.OOPSY_TARGET_USES_SDMMC = 1
-					hardware.defines.USE_FATFS = 1
-				}
-			} else {
-				console.error("failed to match details of data "+param.name)
-			}
+		else {
+			console.log("Non Signal inlets not supported, ignoring.")
 		}
-	})
-	return gen;
+	});
+
+	desc.outlets.forEach(outlet => {
+		if (outlet.type == "signal") {
+			rnbo.outs.push(outlet.tag);
+		}
+		else {
+			console.log("Non Signal outlets not supported, ignoring.")
+		}
+	});
+
+	desc.parameters.forEach(param => {
+		let paramdesc = {
+			name: param.name,
+			cindex: param.index,
+			default: param.initialValue,
+			min: param.minimum,
+			max: param.maximum
+		};
+
+		rnbo.params.push(paramdesc);
+	});
+
+	return rnbo;
 }
 
 function generate_daisy(hardware, nodes) {
@@ -732,7 +647,7 @@ function generate_daisy(hardware, nodes) {
 		}
 		daisy.audio_outs.push(name);
 	}
-
+	
 	if (hardware.defines.OOPSY_TARGET_HAS_MIDI_INPUT) {
 		let name = `dsy_midi_in`
 		nodes[name] = {
@@ -760,7 +675,7 @@ function generate_app(app, hardware, target, config) {
 	const defines = hardware.defines
 	const nodes = {}
 	const daisy = generate_daisy(hardware, nodes, target);
-	const gen = {}
+	const rnbo = {}
 	const name = app.patch.name;
 
 	app.audio_outs = []
@@ -772,12 +687,12 @@ function generate_app(app, hardware, target, config) {
 	app.midi_out_count = 0;
 	app.nodes = nodes;
 	app.daisy = daisy;
-	app.gen = gen;
+	app.rnbo = rnbo;
 	app.nodes = nodes;
 	app.inserts = [];
 
-	gen.audio_ins = app.patch.ins.map((s, i)=>{
-		let name = "gen_in"+(i+1)
+	rnbo.audio_ins = app.patch.ins.map((s, i)=>{
+		let name = "rnbo_in"+(i+1)
 		let label = s.replace(/"/g, "").trim();
 		let src = null;
 		// figure out the src:
@@ -804,8 +719,8 @@ function generate_app(app, hardware, target, config) {
 	})
 
 
-	gen.audio_outs = app.patch.outs.map((s, i)=>{
-		let name = "gen_out"+(i+1)
+	rnbo.audio_outs = app.patch.outs.map((s, i)=>{
+		let name = "rnbo_out"+(i+1)
 		let label = s.replace(/"/g, "").trim();
 		let src = daisy.audio_outs[i];
 		if (!src) {
@@ -820,7 +735,7 @@ function generate_app(app, hardware, target, config) {
 			}
 			app.audio_outs.push(src);
 		}
-
+		
 		let node = {
 			name: name,
 			// label: label,
@@ -845,7 +760,7 @@ function generate_app(app, hardware, target, config) {
 		if (map) {
 			label = maplabel
 		} else {
-			// else it is audio data
+			// else it is audio data			
 			nodes[src].src = src;
 		}
 		nodes[name].label = label
@@ -857,132 +772,8 @@ function generate_app(app, hardware, target, config) {
 		return name;
 	})
 
-	gen.histories = app.patch.histories.map(history=>{
-		const name = history.name
-		const varname = "gen_history_"+name;
-		let node = Object.assign({
-			varname: varname,
-		}, history);
-
-		if (node.midi_type) {
-			if (node.midi_type == "note") {
-				let id = node.midi_num-1
-
-				// get or create:
-				let noteout = app.midi_noteouts[id]
-				if (!noteout) {
-					noteout = {}
-					app.midi_noteouts[id] = noteout
-				}
-				noteout.id = id
-				noteout.cname = `midinote${node.midi_num}`
-				noteout[node.midi_notetype] = node
-
-				// if (node.midi_notetype == "press") {
-				// 	node.midi_throttle = true;
-				// 	node.setter_src = `gen.${node.cname}`
-				// 	app.midi_outs.push(node)
-				// }
-
-			} else {
-
-				app.midi_outs.push(node)
-				node.setter_src = "gen."+node.cname
-				if (node.midi_type == "cc") {
-					app.has_midi_out = true;
-					let statusbyte = 176+((node.midi_chan)-1)%16;
-					node.setter = `daisy.midi_message3(${statusbyte}, ${(node.midi_num)%128}, ((uint8_t)(${node.varname}*127.f)) & 0x7F);`;
-					node.type = "float";
-					node.midi_throttle = true;
-					node.midi_only_when_changed = true;
-					nodes[name] = node
-				} else if (node.midi_type == "press") {
-					app.has_midi_out = true;
-					let statusbyte = 208+((node.midi_chan)-1)%16;
-					node.setter = `daisy.midi_message2(${statusbyte}, ((uint8_t)(${node.varname}*127.f)) & 0x7F);`;
-					node.type = "float";
-					node.midi_throttle = true;
-					node.midi_only_when_changed = true;
-					nodes[name] = node;
-				} else if (node.midi_type == "bend") {
-					app.has_midi_out = true;
-					let statusbyte = 224+((node.midi_chan)-1)%16;
-					let float = `((${node.varname}+1.f)*64.f)`;
-					let lsb = `((uint8_t)(${float}*128.f)) & 0x7F`;
-					let msb = `((uint8_t)${float}) & 0x7F`;
-					node.setter = `daisy.midi_message3(${statusbyte}, ${lsb}, ${msb});`;
-					node.type = "float";
-					node.midi_throttle = true;
-					node.midi_only_when_changed = true;
-					nodes[name] = node;
-				} else if (node.midi_type == "program") {
-					app.has_midi_out = true;
-					let statusbyte = 192+((node.midi_chan)-1)%16;
-					node.setter = `daisy.midi_message2(${statusbyte}, ${node.varname} & 0x7F);`;
-					node.type = "uint8_t";
-					nodes[name] = node;
-				} else if (node.midi_type == "drum") {
-					app.has_midi_out = true;
-					node.setter = `daisy.midi_message3(153, ${(node.midi_num)%128}, ((uint8_t)(${node.varname}*127.f)) & 0x7F);`;
-					node.type = "float";
-					nodes[name] = node
-				} else if (node.midi_type == "vel") {
-					app.has_midi_out = true;
-					let statusbyte = 144+((node.midi_chan)-1)%16;
-					node.setter = `daisy.midi_message3(${statusbyte}, ${(node.midi_num)%128}, ((uint8_t)(${node.varname}*127.f)) & 0x7F);`;
-					node.type = "float";
-					nodes[name] = node
-				} else if (node.midi_type == "clock"
-					 	|| node.midi_type == "stop"
-					 	|| node.midi_type == "start"
-					 	|| node.midi_type == "continue"
-					 	|| node.midi_type == "sense"
-					 	|| node.midi_type == "reset") {
-					app.has_midi_out = true;
-					if (node.midi_type == "clock") {
-						node.setter = `daisy.midi_message1(248);`;
-					} else if (node.midi_type == "stop") {
-						node.setter = `daisy.midi_message1(252);`;
-					} else if (node.midi_type == "start") {
-						node.setter = `daisy.midi_message1(250);`;
-					} else if (node.midi_type == "continue") {
-						node.setter = `daisy.midi_message1(251);`;
-					} else if (node.midi_type == "sense") {
-						node.setter = `daisy.midi_message1(254);`;
-					} else if (node.midi_type == "reset") {
-						node.setter = `daisy.midi_message1(255);`;
-					}
-					node.type = "uint8_t";
-					nodes[name] = node
-				}
-			}
-		} else {
-
-			// search for a matching [out] name / prefix:
-			let map
-			let maplabel
-			Object.keys(hardware.labels.outs).sort().forEach(k => {
-				let match
-				if (match = new RegExp(`^${k}_?(.+)?`).exec(name)) {
-					map = hardware.labels.outs[k];
-					maplabel = match[1] || name
-				}
-			})
-
-			// was this history mapped to something?
-			if (map) {
-				nodes[name] = node
-				node.type = "t_sample";
-				nodes[map].src = "gen."+node.cname; //from.push(src);
-				// nodes[src].to.push(map)
-			}
-
-		}
-		return name;
-	})
-
-	gen.params = app.patch.params.map((param, i)=>{
-		const varname = "gen_param_"+param.name;
+	rnbo.params = app.patch.params.map((param, i)=>{
+		const varname = "rnbo_param_"+param.name;
 		let src, label=param.name, type="float";
 
 		let node = Object.assign({
@@ -1007,30 +798,30 @@ function generate_app(app, hardware, target, config) {
 			node.where = "midi_msg"
 			// need to set "src" to something to prevent this being automapped
 			src = node.where
-			node.code = `if (daisy.midi.lastbyte == 1 && ${ch != null ? `daisy.midi.status == ${176+ch}` : `daisy.midi.status/16 == 11`} && daisy.midi.byte[0] == ${cc}) {
+			node.code = `if (daisy.midi.lastbyte == 1 && ${ch != null ? `daisy.midi.status == ${176+ch}` : `daisy.midi.status/16 == 11`} && daisy.midi.byte[0] == ${cc}) { 
 					${node.varname} = (daisy.midi.byte[1]/127.f)*${asCppNumber(node.range)} + ${asCppNumber(node.min)};
 				}`;
-		} else
+		} else 
 		if (match = (/^midi_press(_(ch)?(\d+))?/g).exec(param.name)) {
 			let ch = match[3] ? ((+match[3])+15)%16 : null;
 			app.has_midi_in = true;
 			node.where = "midi_msg"
 			// need to set "src" to something to prevent this being automapped
 			src = node.where
-			node.code = `if (daisy.midi.lastbyte == 1 && ${ch != null ? `daisy.midi.status == ${208+ch}` : `daisy.midi.status/16 == 13`}) {
+			node.code = `if (daisy.midi.lastbyte == 1 && ${ch != null ? `daisy.midi.status == ${208+ch}` : `daisy.midi.status/16 == 13`}) { 
 					${node.varname} = (daisy.midi.byte[0]/127.f)*${asCppNumber(node.range)} + ${asCppNumber(node.min)};
 				}`;
-		} else
+		} else 
 		if (match = (/^midi_program(_(ch)?(\d+))?/g).exec(param.name)) {
 			let ch = match[3] ? ((+match[3])+15)%16 : null;
 			app.has_midi_in = true;
 			node.where = "midi_msg"
 			// need to set "src" to something to prevent this being automapped
 			src = node.where
-			node.code = `if (daisy.midi.lastbyte == 1 && ${ch != null ? `daisy.midi.status == ${192+ch}` : `daisy.midi.status/16 == 12`}) {
+			node.code = `if (daisy.midi.lastbyte == 1 && ${ch != null ? `daisy.midi.status == ${192+ch}` : `daisy.midi.status/16 == 12`}) { 
 					${node.varname} = (daisy.midi.byte[0]/127.f)*${asCppNumber(node.range)} + ${asCppNumber(node.min)};
 				}`;
-		} else
+		} else 
 		if (match = (/^midi_(vel|drum)(\d+)(_(ch)?(\d+))?/g).exec(param.name)) {
 			let ch = match[5] ? ((+match[5])+15)%16 : (match[1] == "drum" ? 9 : null);
 			let note = (+match[2])%128;
@@ -1038,26 +829,26 @@ function generate_app(app, hardware, target, config) {
 			node.where = "midi_msg"
 			// need to set "src" to something to prevent this being automapped
 			src = node.where
-			node.code = `if (daisy.midi.lastbyte == 1 && ${ch != null ? `(daisy.midi.status == ${128+ch} || daisy.midi.status == ${144+ch})` : `(daisy.midi.status/16 == 8 || daisy.midi.status/16 == 9)`} && daisy.midi.byte[0] == ${note}) {
+			node.code = `if (daisy.midi.lastbyte == 1 && ${ch != null ? `(daisy.midi.status == ${128+ch} || daisy.midi.status == ${144+ch})` : `(daisy.midi.status/16 == 8 || daisy.midi.status/16 == 9)`} && daisy.midi.byte[0] == ${note}) { 
 					${node.varname} = (daisy.midi.byte[1]/127.f)*${asCppNumber(node.range)} + ${asCppNumber(node.min)};
 				}`;
-		} else
+		} else 
 		if (match = (/^midi_bend(_(ch)?(\d+))?/g).exec(param.name)) {
 			let ch = match[3] ? ((+match[3])+15)%16 : null;
 			app.has_midi_in = true;
 			node.where = "midi_msg"
 			// need to set "src" to something to prevent this being automapped
 			src = node.where
-			node.code = `if (daisy.midi.lastbyte == 1 && ${ch != null ? `daisy.midi.status == ${224+ch}` : `daisy.midi.status/16 == 14`}) {
+			node.code = `if (daisy.midi.lastbyte == 1 && ${ch != null ? `daisy.midi.status == ${224+ch}` : `daisy.midi.status/16 == 14`}) { 
 					${node.varname} = ((daisy.midi.byte[0] + daisy.midi.byte[1]/128.f)/128.f)*${asCppNumber(node.range)} + ${asCppNumber(node.min)};
 				}`;
-		} else
+		} else 
 		if (param.name == "midi_clock") {
 			app.has_midi_in = true;
 			node.where = "midi_status"
 			// need to set "src" to something to prevent this being automapped
 			src = node.where
-			node.code = `if (byte == 248) {
+			node.code = `if (byte == 248) { 
 					${node.varname} = 1.f;
 				}`;
 			// reset:
@@ -1070,9 +861,9 @@ function generate_app(app, hardware, target, config) {
 			node.where = "midi_status"
 			// need to set "src" to something to prevent this being automapped
 			src = node.where
-			node.code = `if (byte == 250 || byte == 251) {
+			node.code = `if (byte == 250 || byte == 251) { 
 					${node.varname} = 1.f;
-				} else if (byte == 252) {
+				} else if (byte == 252) { 
 					${node.varname} = 0.f;
 				}`;
 			// reset:
@@ -1093,7 +884,7 @@ function generate_app(app, hardware, target, config) {
 						//type = match[3];
 						type = match[1]
 						// trim type from label:
-						//label = (match[2] || "") + (match[5] || "")
+						//label = (match[2] || "") + (match[5] || "") 
 						label = match[3] || label
 					}
 				}
@@ -1103,30 +894,6 @@ function generate_app(app, hardware, target, config) {
 		node.type = type;
 		node.src = src;
 		node.label = label;
-
-		// Apply input scaling
-		if (src in hardware.inputs)
-		{
-			let input = hardware.inputs[src];
-			node.permit_scale = input.permit_scale;
-
-			// TODO -- we should allow no scaling to occur on certain inputs
-			if ('range' in input && typeof input.range !== 'undefined')
-			{
-				let input_min = input.range[0] || 0;
-				let input_max = input.range[1] || 1;
-
-				// We ignore this step if the fields are default
-				if (input_min != 0 || input_max != 1)
-				{
-					let new_range = node.range / (input_max - input_min);
-					node.range = new_range;
-
-					let new_min = node.min - input_min * new_range;
-					node.min = new_min;
-				}
-			}
-		}
 
 		let ideal_steps = 100 // about 4 good twists of the encoder
 		if (node.type == "bool" || node.type == "int") {
@@ -1142,13 +909,13 @@ function generate_app(app, hardware, target, config) {
 					let power = Math.round(Math.log2(node.range / ideal_steps))
 					node.stepsize = Math.pow(2, power)
 				}
-			}
+			} 
 		}
 		if (!node.stepsize) {
 			// general case:
 			node.stepsize = node.range / ideal_steps
 		}
-
+		
 		nodes[varname] = node;
 		if (src && nodes[src]) {
 			nodes[src].to.push(varname)
@@ -1156,7 +923,7 @@ function generate_app(app, hardware, target, config) {
 		return varname;
 	})
 
-	gen.datas = app.patch.datas.map((param, i)=>{
+	rnbo.datas = app.patch.datas.map((param, i)=>{
 		const varname = "gen_data_"+param.name;
 		let src, label;
 		// search for a matching [out] name / prefix:
@@ -1179,7 +946,7 @@ function generate_app(app, hardware, target, config) {
 		nodes[varname] = node;
 
 		if (src) {
-			nodes[src].data = "gen." + param.cname;
+			nodes[src].data = "rnbo." + param.cname;
 			//nodes[src].to.push(varname)
 			//nodes[src].from.push(src);
 		}
@@ -1194,15 +961,15 @@ function generate_app(app, hardware, target, config) {
 	// fill all my holes
 	// map unused cvs/knobs to unmapped params?
 	let upi=0; // unused param index
-	let param = gen.params[upi];
+	let param = rnbo.params[upi];
 	Object.keys(hardware.inputs).forEach(name => {
 		const node = nodes[name];
 		if (node.to.length == 0 && node.automap) {
 			//console.log(name, "not mapped")
 			// find next param without a src:
-			while (param && !!nodes[param].src) param = gen.params[++upi];
+			while (param && !!nodes[param].src) param = rnbo.params[++upi];
 			if (param) {
-				// console.log(name, "map to", param)
+				//console.log(name, "map to", param)
 				nodes[param].src = name;
 				node.to.push(param);
 			}
@@ -1231,14 +998,12 @@ function generate_app(app, hardware, target, config) {
 	const struct = `
 
 struct App_${name} : public oopsy::App<App_${name}> {
-	${gen.params
+	${rnbo.params
 		.map(name=>`
 	${nodes[name].type} ${name};`).join("")}
 	${app.midi_noteouts.map(note=>`
-	oopsy::GenDaisy::MidiNote ${note.cname};`).join("")}
-	${gen.histories.map(name=>nodes[name]).filter(node => node && node.midi_type).map(node=>`
-	${node.type} ${node.varname};`).join("")}
-	${gen.audio_outs.map(name=>nodes[name]).filter(node => node && node.midi_type).map(node=>`
+	oopsy::RNBODaisy::MidiNote ${note.cname};`).join("")}
+	${rnbo.audio_outs.map(name=>nodes[name]).filter(node => node && node.midi_type).map(node=>`
 	${node.type} ${node.varname};`).join("")}
 	${daisy.device_outs.map(name => nodes[name])
 		.filter(node => node.src || node.from.length)
@@ -1247,36 +1012,45 @@ struct App_${name} : public oopsy::App<App_${name}> {
 	${app.audio_outs.map(name=>`
 	float ${name}[OOPSY_BLOCK_SIZE];`).join("")}
 
-	void init(oopsy::GenDaisy& daisy) {
-		daisy.gen = ${name}::create(daisy.hardware.${som_or_seed}.AudioSampleRate(), daisy.hardware.${som_or_seed}.AudioBlockSize());
-		${name}::State& gen = *(${name}::State *)daisy.gen;
+	RNBO::${name}<> *rnbo;
 
-		daisy.param_count = ${gen.params.length};
-		${(defines.OOPSY_HAS_PARAM_VIEW) ? `daisy.param_selected = ${Math.max(0, gen.params.map(name=>nodes[name].src).indexOf(undefined))};`:``}
-		${gen.params.map(name=>nodes[name])
+	void init(oopsy::RNBODaisy& daisy) {
+		rnbo = new RNBO::${name}<>();
+		daisy.rnbo = rnbo;
+
+		// initialize RNBO, here for example audio samples are allocated in the SDRAM (through our allocator)
+		rnbo->initialize();
+
+		// if you do not want this to allocate (and a slightly better performance) consider exporting your code
+		// with a fixed audio vector size matching the one you are using (vectorsize)
+		#ifdef OOPSY_TARGET_PATCH_SM
+		rnbo->prepareToProcess(daisy.hardware.AudioSampleRate(), daisy.hardware.AudioBlockSize(), true);
+		#else
+		rnbo->prepareToProcess(daisy.hardware.seed.AudioSampleRate(), daisy.hardware.seed.AudioBlockSize(), true);
+		#endif
+		
+		daisy.param_count = ${rnbo.params.length};
+		${(defines.OOPSY_HAS_PARAM_VIEW) ? `daisy.param_selected = ${Math.max(0, rnbo.params.map(name=>nodes[name].src).indexOf(undefined))};`:``}
+		${rnbo.params.map(name=>nodes[name])
 			.map(node=>`
 		${node.varname} = ${asCppNumber(node.default, node.type)};`).join("")}
 		${daisy.device_outs.map(name => nodes[name])
 			.filter(node => node.src || node.from.length)
 			.map(node=>`
 		${node.name} = 0.f;`).join("")}
-		${gen.histories.map(name=>nodes[name]).filter(node => node && node.midi_type).map(node=>`
-		${node.varname} = ${asCppNumber(node.default, node.type)};`).join("")}
 		${daisy.datahandlers.map(name => nodes[name])
 			.filter(node => node.init)
 			.filter(node => node.data)
 			.map(node =>`
 		${interpolate(node.init, node)};`).join("")}
-		${gen.datas.map(name=>nodes[name])
+		${rnbo.datas.map(name=>nodes[name])
 			.filter(node => node.wavname)
 			.map(node=>`
-		daisy.sdcard_load_wav("${node.wavname}", gen.${node.cname});`).join("")}
+		daisy.sdcard_load_wav("${node.wavname}", rnbo.${node.cname});`).join("")}
 	}
 
-	void audioCallback(oopsy::GenDaisy& daisy, daisy::AudioHandle::InputBuffer hardware_ins, daisy::AudioHandle::OutputBuffer hardware_outs, size_t size) {
+	void audioCallback(oopsy::RNBODaisy& daisy, daisy::AudioHandle::InputBuffer hardware_ins, daisy::AudioHandle::OutputBuffer hardware_outs, size_t size) {
 		Daisy& hardware = daisy.hardware;
-		${name}::State& gen = *(${name}::State *)daisy.gen;
-		${hardware.som == 'seed' ? "hardware.ProcessAllControls();" : ""}
 		${app.inserts.concat(hardware.inserts).filter(o => o.where == "audio").map(o => o.code).join("\n\t")}
 		${daisy.device_inputs.map(name => nodes[name])
 			.filter(node => node.to.length)
@@ -1287,26 +1061,27 @@ struct App_${name} : public oopsy::App<App_${name}> {
 			.filter(node => node.to.length)
 			.map(node=>`
 		float ${node.name} = ${node.code};`).join("")}
-		${gen.params
+		${rnbo.params
 			.map(name=>nodes[name])
 			.filter(node => node.src)
 			.filter(node => node.where == "audio" || node.where == undefined)
-			.map(node_scale).join("")}
-		${gen.params
+			.map(node=>`
+		${node.varname} = (${node.type})(${node.src}*${asCppNumber(node.range)} + ${asCppNumber(node.min + (node.type == "int" || node.type == "bool" ? 0.5 : 0))});`).join("")}
+		${rnbo.params
 			.map(name=>nodes[name])
 			.map(node=>`
-		gen.set_${node.name}(${node.varname});`).join("")}
+		rnbo->setParameterValue(${node.cindex}, ${node.varname}, RNBO::RNBOTimeNow);`).join("")}
 		${daisy.audio_ins.map((name, i)=>`
 		float * ${name} = (float *)hardware_ins[${i}];`).join("")}
 		${daisy.audio_outs.map((name, i)=>`
 		float * ${name} = hardware_outs[${i}];`).join("")}
 		${app.has_midi_in ? daisy.midi_ins.map(name=>`
 		float * ${name} = daisy.midi_in_data;`).join("") : ''}
-		// ${gen.audio_ins.map(name=>nodes[name].label).join(", ")}:
-		float * inputs[] = { ${gen.audio_ins.map(name=>nodes[name].src).join(", ")} };
-		// ${gen.audio_outs.map(name=>nodes[name].label).join(", ")}:
-		float * outputs[] = { ${gen.audio_outs.map(name=>nodes[name].src).join(", ")} };
-		gen.perform(inputs, outputs, size);
+		// ${rnbo.audio_ins.map(name=>nodes[name].label).join(", ")}:
+		float * inputs[] = { ${rnbo.audio_ins.map(name=>nodes[name].src).join(", ")} }; 
+		// ${rnbo.audio_outs.map(name=>nodes[name].label).join(", ")}:
+		float * outputs[] = { ${rnbo.audio_outs.map(name=>nodes[name].src).join(", ")} };
+		rnbo->process(inputs, ${rnbo.audio_ins.length}, outputs, ${rnbo.audio_outs.length}, size);
 		${daisy.device_outs.map(name => nodes[name])
 			.filter(node => node.src || node.from.length)
 			.map(node => node.src ? `
@@ -1328,14 +1103,14 @@ struct App_${name} : public oopsy::App<App_${name}> {
 		if (${node.varname} != (${node.type})${node.setter_src}) {
 			${node.varname} = ${node.setter_src};
 			${node.setter}
-		}`).join("")}
+		}`).join("")}		
 		${app.midi_noteouts
 			.filter(note=>note.vel && note.pitch)
 			.map(note=>`
-		${note.cname}.update(daisy,
-			((uint8_t)(gen.${note.vel.cname}*127.f)) & 0x7F,
-			((uint8_t)gen.${note.pitch.cname}) & 0x7F,
-			${note.chan ? `((uint8_t)(gen.${note.chan.cname})-1) % 16` : "0"});`).join("")}
+		${note.cname}.update(daisy, 
+			((uint8_t)(rnbo.${note.vel.cname}*127.f)) & 0x7F, 
+			((uint8_t)rnbo.${note.pitch.cname}) & 0x7F, 
+			${note.chan ? `((uint8_t)(rnbo.${note.chan.cname})-1) % 16` : "0"});`).join("")}
 		// msgs: ${(app.midi_outs.filter(node=>node.midi_throttle).length + app.midi_noteouts.filter(note=>note.press).length)}
 		// rate: ${hardware.defines.OOPSY_BLOCK_RATE/500}
 		${(app.midi_outs.filter(node=>node.midi_throttle).length + app.midi_noteouts.filter(note=>note.press).length) > 0 ? `
@@ -1351,7 +1126,7 @@ struct App_${name} : public oopsy::App<App_${name}> {
 			${app.midi_noteouts
 				.filter(note=>note.press)
 				.map(note=>`
-			${note.cname}.update_pressure(daisy, ((uint8_t)gen.${note.press.cname}) & 0x7F);`).join("")}
+			${note.cname}.update_pressure(daisy, ((uint8_t)rnbo.${note.press.cname}) & 0x7F);`).join("")}
 		}` : ''}
 		${app.has_midi_out ? daisy.midi_outs.map(name=>nodes[name].from.map(name=>`
 		daisy.midi_postperform(${name}, size);`).join("")).join("") : ''}
@@ -1361,12 +1136,11 @@ struct App_${name} : public oopsy::App<App_${name}> {
 		memcpy(${node.name}, ${node.src}, sizeof(float)*size);` : `
 		memset(${node.name}, 0, sizeof(float)*size);`).join("")}
 		${app.inserts.concat(hardware.inserts).filter(o => o.where == "post_audio").map(o => o.code).join("\n\t")}
-		${hardware.som == 'seed' || hardware.som == 'petal_125b_sm' ? "hardware.PostProcess();" : ""}
-	}
+		${hardware.defines.OOPSY_TARGET_SEED ? "hardware.PostProcess();" : ""}
+	}	
 
-	void mainloopCallback(oopsy::GenDaisy& daisy, uint32_t t, uint32_t dt) {
+	void mainloopCallback(oopsy::RNBODaisy& daisy, uint32_t t, uint32_t dt) {
 		Daisy& hardware = daisy.hardware;
-		${name}::State& gen = *(${name}::State *)daisy.gen;
 		${app.inserts.concat(hardware.inserts).filter(o => o.where == "main").map(o => o.code).join("\n\t")}
 		${daisy.datahandlers.map(name => nodes[name])
 			.filter(node => node.where == "main")
@@ -1382,23 +1156,23 @@ struct App_${name} : public oopsy::App<App_${name}> {
 		while(daisy.uart.Readable()) {
 			uint8_t byte = daisy.uart.PopRx();
 			if (byte >= 128) { // status byte
-				${gen.params
+				${rnbo.params
 				.map(name=>nodes[name])
 				.filter(node => node.where == "midi_status")
 				.map(node=>node.code)
 				.concat(`if (byte == 0xFF) { // reset event -> go to bootloader
 					daisy.log("reboot");
 					daisy::System::ResetToBootloader();
-				}
+				} 
 				if (byte <= 240 || byte == 247) {
-					daisy.midi.status = byte;
+					daisy.midi.status = byte; 
 					daisy.midi.lastbyte = 255; // means 'no bytes received'
 				}`)
 				.join(" else ")}
 			} else {
-				daisy.midi.lastbyte = !daisy.midi.lastbyte;
+				daisy.midi.lastbyte = !daisy.midi.lastbyte; 
 				daisy.midi.byte[daisy.midi.lastbyte] = byte;
-				${gen.params
+				${rnbo.params
 					.map(name=>nodes[name])
 					.filter(node => node.where == "midi_msg")
 					.map(node=>node.code)
@@ -1417,12 +1191,11 @@ struct App_${name} : public oopsy::App<App_${name}> {
 			}` : ""}
 			daisy.midi_in_active = 1;
 		}` : "// no midi input handling"}
-		hardware.LoopProcess();
+				hardware.LoopProcess();
 	}
 
-	void displayCallback(oopsy::GenDaisy& daisy, uint32_t t, uint32_t dt) {
+	void displayCallback(oopsy::RNBODaisy& daisy, uint32_t t, uint32_t dt) {
 		Daisy& hardware = daisy.hardware;
-		${name}::State& gen = *(${name}::State *)daisy.gen;
 		${app.inserts.concat(hardware.inserts).filter(o => o.where == "display").map(o => o.code).join("\n\t")}
 		${daisy.datahandlers.map(name => nodes[name])
 			.filter(node => node.where == "display")
@@ -1440,26 +1213,26 @@ struct App_${name} : public oopsy::App<App_${name}> {
 	${defines.OOPSY_HAS_PARAM_VIEW ? `
 	float setparam(int idx, float val) {
 		switch(idx) {
-			${gen.params
+			${rnbo.params
 				.map(name=>nodes[name])
 				.map((node, i)=>`
 			case ${i}: return ${node.varname} = (${node.type})(val > ${asCppNumber(node.max, node.type)}) ? ${asCppNumber(node.max, node.type)} : (val < ${asCppNumber(node.min, node.type)}) ? ${asCppNumber(node.min, node.type)} : val;`).join("")}
 		}
-		return 0.f;
+		return 0.f;	
 	}
 
 	${defines.OOPSY_TARGET_HAS_OLED && defines.OOPSY_HAS_PARAM_VIEW ? `
-	void paramCallback(oopsy::GenDaisy& daisy, int idx, char * label, int len, bool tweak) {
-		switch(idx) { ${gen.params.map(name=>nodes[name]).map((node, i)=>`
+	void paramCallback(oopsy::RNBODaisy& daisy, int idx, char * label, int len, bool tweak) {
+		switch(idx) { ${rnbo.params.map(name=>nodes[name]).map((node, i)=>`
 		case ${i}: ${defines.OOPSY_CAN_PARAM_TWEAK ? `
 		if (tweak) setparam(${i}, ${node.varname} + daisy.menu_button_incr ${node.type == "float" ? '* ' + asCppNumber(node.stepsize, node.type) : ""});` : ""}
-		${defines.OOPSY_OLED_DISPLAY_WIDTH < 128 ? `snprintf(label, len, "${node.label.substring(0,5).padEnd(5," ")}" FLT_FMT3 "", FLT_VAR3(${node.varname}) );` : `snprintf(label, len, "${node.src ?
-			`${node.src.substring(0,3).padEnd(3," ")} ${node.label.substring(0,11).padEnd(11," ")}" FLT_FMT3 ""`
-			:
+		${defines.OOPSY_OLED_DISPLAY_WIDTH < 128 ? `snprintf(label, len, "${node.label.substring(0,5).padEnd(5," ")}" FLT_FMT3 "", FLT_VAR3(${node.varname}) );` : `snprintf(label, len, "${node.src ? 
+			`${node.src.substring(0,3).padEnd(3," ")} ${node.label.substring(0,11).padEnd(11," ")}" FLT_FMT3 ""` 
+			: 
 			`%s ${node.label.substring(0,11).padEnd(11," ")}" FLT_FMT3 "", (daisy.param_is_tweaking && ${i} == daisy.param_selected) ? "enc" : "   "`
 			}, FLT_VAR3(${node.varname}) );`}
 		break;`).join("")}
-		}
+		}	
 	}
 	` : ""}
 	` : ""}
