@@ -62,6 +62,7 @@ function run() {
 	let cpps = []
 	let samplerate = 48
 	let blocksize = 48
+	let midiuse = "none";
 	let options = {}
 
 	checkBuildEnvironment();
@@ -114,6 +115,10 @@ function run() {
 			case "nooled": 
 			case "boost": 
 			case "fastmath": options[arg] = true; break;
+
+			case "midinone":
+			case "midiusb":
+			case "midiuart": midiuse = arg.match(/midi(.+)/)[1]; break;
 
 			default: {
 				// assume anything else is a file path:
@@ -281,12 +286,18 @@ function run() {
 		target: target,
 		hardware: hardware,
 		apps: apps,
+		midiuse: midiuse
 	}
 
 	let defines = hardware.defines;
 
 	if (defines.OOPSY_TARGET_HAS_MIDI_INPUT || defines.OOPSY_TARGET_HAS_MIDI_OUTPUT) {
-		defines.OOPSY_TARGET_USES_MIDI_UART = 1
+		if (midiuse == "usb") {
+			defines.OOPSY_TARGET_USES_MIDI_USB = 1
+		}
+		else if (midiuse == "uart") {
+			defines.OOPSY_TARGET_USES_MIDI_UART = 1
+		}
 	}
 
 	if (apps.length > 1) {
@@ -294,7 +305,12 @@ function run() {
 		// generate midi-handling code for any multi-app on a midi-enabled platform
 		// so that program-change messages for apps will work:
 		if (hardware.defines.OOPSY_TARGET_HAS_MIDI_INPUT) {
-			hardware.defines.OOPSY_TARGET_USES_MIDI_UART = 1
+			if (midiuse == "usb") {
+				defines.OOPSY_TARGET_USES_MIDI_USB = 1
+			}
+			else if (midiuse == "uart") {
+				defines.OOPSY_TARGET_USES_MIDI_UART = 1
+			}
 		}
 	}
 	if (options.nooled && defines.OOPSY_TARGET_HAS_OLED) {
@@ -625,10 +641,10 @@ function generate_app(app, hardware, target, config) {
 	app.audio_outs = []
 	app.midi_outs = []
 	app.midi_noteouts = []
-	app.has_midi_in = false
-	app.has_generic_midi_in = false
-	app.has_midi_out = false
-	app.midi_out_count = 0;
+	app.has_midi_in = true
+	app.has_generic_midi_in = true
+	app.has_midi_out = true
+	app.midi_out_count = 1;
 	app.nodes = nodes;
 	app.daisy = daisy;
 	app.rnbo = rnbo;
@@ -639,15 +655,7 @@ function generate_app(app, hardware, target, config) {
 		let name = "rnbo_in"+(i+1)
 		let label = s.replace(/"/g, "").trim();
 		let src = null;
-		// figure out the src:
-		if (label == "midi" || label == "midithru") {
-			if (daisy.midi_ins.length) {
-				src = daisy.midi_ins[0]
-				app.has_midi_in = true;
-				app.has_generic_midi_in = true;
-				if (label == "midithru") app.has_generic_midi_thru = true;
-			}
-		} else if (daisy.audio_ins.length > 0) {
+		if (daisy.audio_ins.length > 0) {
 			src = daisy.audio_ins[i % daisy.audio_ins.length];
 		}
 		nodes[name] = {
@@ -730,110 +738,23 @@ function generate_app(app, hardware, target, config) {
 		node.default = node.default || 0;
 		node.range = node.max - node.min;
 
-		let match
-		// check for dedicated midi patterns:
-		// e.g.
-		// [param midi_cc100_ch1] // input is 0..1 for cc value
-		// [param midi_cc74]	  // default channel 1
-		if (match = (/^midi_cc(\d+)(_(ch)?(\d+))?/g).exec(param.name)) {
-			let ch = match[4] ? ((+match[4])+15)%16 : null;
-			let cc = (+match[1])%128;
-			app.has_midi_in = true;
-			node.where = "midi_msg"
-			// need to set "src" to something to prevent this being automapped
-			src = node.where
-			node.code = `if (daisy.midi.lastbyte == 1 && ${ch != null ? `daisy.midi.status == ${176+ch}` : `daisy.midi.status/16 == 11`} && daisy.midi.byte[0] == ${cc}) { 
-					${node.varname} = (daisy.midi.byte[1]/127.f)*${asCppNumber(node.range)} + ${asCppNumber(node.min)};
-				}`;
-		} else 
-		if (match = (/^midi_press(_(ch)?(\d+))?/g).exec(param.name)) {
-			let ch = match[3] ? ((+match[3])+15)%16 : null;
-			app.has_midi_in = true;
-			node.where = "midi_msg"
-			// need to set "src" to something to prevent this being automapped
-			src = node.where
-			node.code = `if (daisy.midi.lastbyte == 1 && ${ch != null ? `daisy.midi.status == ${208+ch}` : `daisy.midi.status/16 == 13`}) { 
-					${node.varname} = (daisy.midi.byte[0]/127.f)*${asCppNumber(node.range)} + ${asCppNumber(node.min)};
-				}`;
-		} else 
-		if (match = (/^midi_program(_(ch)?(\d+))?/g).exec(param.name)) {
-			let ch = match[3] ? ((+match[3])+15)%16 : null;
-			app.has_midi_in = true;
-			node.where = "midi_msg"
-			// need to set "src" to something to prevent this being automapped
-			src = node.where
-			node.code = `if (daisy.midi.lastbyte == 1 && ${ch != null ? `daisy.midi.status == ${192+ch}` : `daisy.midi.status/16 == 12`}) { 
-					${node.varname} = (daisy.midi.byte[0]/127.f)*${asCppNumber(node.range)} + ${asCppNumber(node.min)};
-				}`;
-		} else 
-		if (match = (/^midi_(vel|drum)(\d+)(_(ch)?(\d+))?/g).exec(param.name)) {
-			let ch = match[5] ? ((+match[5])+15)%16 : (match[1] == "drum" ? 9 : null);
-			let note = (+match[2])%128;
-			app.has_midi_in = true;
-			node.where = "midi_msg"
-			// need to set "src" to something to prevent this being automapped
-			src = node.where
-			node.code = `if (daisy.midi.lastbyte == 1 && ${ch != null ? `(daisy.midi.status == ${128+ch} || daisy.midi.status == ${144+ch})` : `(daisy.midi.status/16 == 8 || daisy.midi.status/16 == 9)`} && daisy.midi.byte[0] == ${note}) { 
-					${node.varname} = (daisy.midi.byte[1]/127.f)*${asCppNumber(node.range)} + ${asCppNumber(node.min)};
-				}`;
-		} else 
-		if (match = (/^midi_bend(_(ch)?(\d+))?/g).exec(param.name)) {
-			let ch = match[3] ? ((+match[3])+15)%16 : null;
-			app.has_midi_in = true;
-			node.where = "midi_msg"
-			// need to set "src" to something to prevent this being automapped
-			src = node.where
-			node.code = `if (daisy.midi.lastbyte == 1 && ${ch != null ? `daisy.midi.status == ${224+ch}` : `daisy.midi.status/16 == 14`}) { 
-					${node.varname} = ((daisy.midi.byte[0] + daisy.midi.byte[1]/128.f)/128.f)*${asCppNumber(node.range)} + ${asCppNumber(node.min)};
-				}`;
-		} else 
-		if (param.name == "midi_clock") {
-			app.has_midi_in = true;
-			node.where = "midi_status"
-			// need to set "src" to something to prevent this being automapped
-			src = node.where
-			node.code = `if (byte == 248) { 
-					${node.varname} = 1.f;
-				}`;
-			// reset:
-			app.inserts.push({
-				where: "post_audio",
-				code: `${node.varname} = 0.f;`
-			})
-		} else if (param.name == "midi_play") {
-			app.has_midi_in = true;
-			node.where = "midi_status"
-			// need to set "src" to something to prevent this being automapped
-			src = node.where
-			node.code = `if (byte == 250 || byte == 251) { 
-					${node.varname} = 1.f;
-				} else if (byte == 252) { 
-					${node.varname} = 0.f;
-				}`;
-			// reset:
-			app.inserts.push({
-				where: "post_audio",
-				code: `${node.varname} = 0.f;`
-			})
-		} else {
-			// search for a matching [out] name / prefix:
-			Object.keys(hardware.labels.params).sort().forEach(k => {
-				if (match = new RegExp(`^${k}_?(.+)?`).exec(param.name)) {
-					src = hardware.labels.params[k];
-					label = match[1] || param.name
+		// search for a matching [out] name / prefix:
+		Object.keys(hardware.labels.params).sort().forEach(k => {
+			if (match = new RegExp(`^${k}_?(.+)?`).exec(param.name)) {
+				src = hardware.labels.params[k];
+				label = match[1] || param.name
 
-					// search for any type qualifiers:
-					//if (match = label.match(/^((.+)_)?(int|bool)(_(.*))?$/)) {
-					if (match = label.match(/^(int|bool)(_(.*))?$/)) {
-						//type = match[3];
-						type = match[1]
-						// trim type from label:
-						//label = (match[2] || "") + (match[5] || "") 
-						label = match[3] || label
-					}
+				// search for any type qualifiers:
+				//if (match = label.match(/^((.+)_)?(int|bool)(_(.*))?$/)) {
+				if (match = label.match(/^(int|bool)(_(.*))?$/)) {
+					//type = match[3];
+					type = match[1]
+					// trim type from label:
+					//label = (match[2] || "") + (match[5] || "") 
+					label = match[3] || label
 				}
-			})
-		}
+			}
+		})
 
 		node.type = type;
 		node.src = src;
@@ -876,10 +797,6 @@ function generate_app(app, hardware, target, config) {
 			if (match = new RegExp(`^${k}_?(.+)?`).exec(param.name)) {
 				src = hardware.labels.datas[k];
 				label = match[1] || param.name
-
-				if (param.name == "midi") {
-					app.has_midi_out = true;
-				}
 			}
 		})
 
@@ -899,7 +816,12 @@ function generate_app(app, hardware, target, config) {
 	})
 
 	if ((app.has_midi_in && hardware.defines.OOPSY_TARGET_HAS_MIDI_INPUT) || (app.has_midi_out && hardware.defines.OOPSY_TARGET_HAS_MIDI_OUTPUT)) {
-		defines.OOPSY_TARGET_USES_MIDI_UART = 1
+		if (config.midiuse == "usb") {
+			defines.OOPSY_TARGET_USES_MIDI_USB = 1
+		}
+		else if (config.midiuse == "uart") {
+			defines.OOPSY_TARGET_USES_MIDI_UART = 1
+		}	
 	}
 
 	// fill all my holes
@@ -940,8 +862,6 @@ struct App_${name} : public oopsy::App<App_${name}> {
 	${rnbo.params
 		.map(name=>`
 	${nodes[name].type} ${name};`).join("")}
-	${app.midi_noteouts.map(note=>`
-	oopsy::RNBODaisy::MidiNote ${note.cname};`).join("")}
 	${rnbo.audio_outs.map(name=>nodes[name]).filter(node => node && node.midi_type).map(node=>`
 	${node.type} ${node.varname};`).join("")}
 	${daisy.device_outs.map(name => nodes[name])
@@ -1014,8 +934,6 @@ struct App_${name} : public oopsy::App<App_${name}> {
 		float * ${name} = (float *)hardware_ins[${i}];`).join("")}
 		${daisy.audio_outs.map((name, i)=>`
 		float * ${name} = hardware_outs[${i}];`).join("")}
-		${app.has_midi_in ? daisy.midi_ins.map(name=>`
-		float * ${name} = daisy.midi_in_data;`).join("") : ''}
 		// ${rnbo.audio_ins.map(name=>nodes[name].label).join(", ")}:
 		float * inputs[] = { ${rnbo.audio_ins.map(name=>nodes[name].src).join(", ")} }; 
 		// ${rnbo.audio_outs.map(name=>nodes[name].label).join(", ")}:
@@ -1035,40 +953,9 @@ struct App_${name} : public oopsy::App<App_${name}> {
 			.filter(node => node.where == "audio")
 			.filter(node => node.data)
 			.map(node =>`
-		${interpolate(node.code, node)} // data out`).join("")}
-		${app.midi_outs
-			.filter(node=>!node.midi_throttle)
-			.map(node=>`
-		if (${node.varname} != (${node.type})${node.setter_src}) {
-			${node.varname} = ${node.setter_src};
-			${node.setter}
-		}`).join("")}		
-		${app.midi_noteouts
-			.filter(note=>note.vel && note.pitch)
-			.map(note=>`
-		${note.cname}.update(daisy, 
-			((uint8_t)(rnbo.${note.vel.cname}*127.f)) & 0x7F, 
-			((uint8_t)rnbo.${note.pitch.cname}) & 0x7F, 
-			${note.chan ? `((uint8_t)(rnbo.${note.chan.cname})-1) % 16` : "0"});`).join("")}
+		${interpolate(node.code, node)} // data out`).join("")}	
 		// msgs: ${(app.midi_outs.filter(node=>node.midi_throttle).length + app.midi_noteouts.filter(note=>note.press).length)}
 		// rate: ${hardware.defines.OOPSY_BLOCK_RATE/500}
-		${(app.midi_outs.filter(node=>node.midi_throttle).length + app.midi_noteouts.filter(note=>note.press).length) > 0 ? `
-		if (daisy.blockcount % ${ Math.ceil((app.midi_outs.filter(node=>node.midi_throttle).length + app.midi_noteouts
-			.filter(note=>note.press).length) * hardware.defines.OOPSY_BLOCK_RATE/500)} == 0){ // throttle output for MIDI baud limits
-			${app.midi_outs
-				.filter(node=>node.midi_throttle)
-				.map(node=>`
-			${node.midi_only_when_changed ? `if (${node.varname} != (${node.type})${node.setter_src}) {` : `{`}
-				${node.varname} = ${node.setter_src};
-				${node.setter}
-			}`).join("")}
-			${app.midi_noteouts
-				.filter(note=>note.press)
-				.map(note=>`
-			${note.cname}.update_pressure(daisy, ((uint8_t)rnbo.${note.press.cname}) & 0x7F);`).join("")}
-		}` : ''}
-		${app.has_midi_out ? daisy.midi_outs.map(name=>nodes[name].from.map(name=>`
-		daisy.midi_postperform(${name}, size);`).join("")).join("") : ''}
 		${daisy.audio_outs.map(name=>nodes[name])
 			.filter(node => node.src != node.name)
 			.map(node=>node.src ? `
@@ -1091,45 +978,6 @@ struct App_${name} : public oopsy::App<App_${name}> {
 			.filter(node => node.config.where == "main")
 			.map(node=>`
 		${interpolate(node.config.code, node)}`).join("")}
-		${defines.OOPSY_TARGET_USES_MIDI_UART ? `
-		while(daisy.uart.Readable()) {
-			uint8_t byte = daisy.uart.PopRx();
-			if (byte >= 128) { // status byte
-				${rnbo.params
-				.map(name=>nodes[name])
-				.filter(node => node.where == "midi_status")
-				.map(node=>node.code)
-				.concat(`if (byte == 0xFF) { // reset event -> go to bootloader
-					daisy.log("reboot");
-					daisy::System::ResetToBootloader();
-				} 
-				if (byte <= 240 || byte == 247) {
-					daisy.midi.status = byte; 
-					daisy.midi.lastbyte = 255; // means 'no bytes received'
-				}`)
-				.join(" else ")}
-			} else {
-				daisy.midi.lastbyte = !daisy.midi.lastbyte; 
-				daisy.midi.byte[daisy.midi.lastbyte] = byte;
-				${rnbo.params
-					.map(name=>nodes[name])
-					.filter(node => node.where == "midi_msg")
-					.map(node=>node.code)
-					.concat(defines.OOPSY_MULTI_APP ? `
-					if (daisy.midi.status/16 == 12) { // program change -> app change
-						daisy.schedule_app_load(daisy.midi.byte[daisy.midi.lastbyte]);
-					}`:[])
-					.join(" else ")}
-			}
-			${app.has_generic_midi_in ? `
-			${app.has_generic_midi_thru ? `daisy.midi_message1(byte); // thru` : ``}
-			if (daisy.midi_in_written < OOPSY_BLOCK_SIZE) {
-				// scale (0, 255) to (0.0, 1.0) to protect hardware from accidental patching
-				daisy.midi_in_data[daisy.midi_in_written] = byte / 256.0f;
-				daisy.midi_in_written++;
-			}` : ""}
-			daisy.midi_in_active = 1;
-		}` : "// no midi input handling"}
 	}
 
 	void displayCallback(oopsy::RNBODaisy& daisy, uint32_t t, uint32_t dt) {
