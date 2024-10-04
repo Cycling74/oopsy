@@ -146,7 +146,7 @@ namespace oopsy
 		void (*paramCallback)(int idx, char *label, int len, bool tweak);
 #endif
 		void *app = nullptr;
-		void *rnbo = nullptr;
+		RNBO::PatcherInterface *rnbo = nullptr;
 		bool nullAudioCallbackRunning = false;
 
 #ifdef OOPSY_TARGET_HAS_OLED
@@ -181,69 +181,11 @@ namespace oopsy
 #endif // OOPSY_TARGET_HAS_OLED
 
 #ifdef OOPSY_TARGET_USES_MIDI_UART
-
-		struct MidiNote
-		{
-			uint8_t chan, pitch, vel, press;
-
-			void init()
-			{
-				chan = 0;
-				pitch = 36;
-				vel = press = 0;
-			}
-
-			// call at block rate
-			// (so long as at least velocity out is defined)
-			void update(RNBODaisy &daisy, uint8_t v, uint8_t p = 36, uint8_t c = 0)
-			{
-				// a change of pitch or chan must stop an ongoing note
-				if (vel && (p != pitch || c != chan))
-				{
-					// send note off to stop old note
-					vel = 0;
-					daisy.midi_message3(144 + chan, pitch, vel);
-				}
-				pitch = p;
-				chan = c;
-				// a change of velocity between zero and nonzero should trigger a note on/off
-				if ((!v) != (!vel))
-				{
-					daisy.midi_message3(144 + chan, pitch, v);
-				}
-				vel = v;
-			}
-
-			// call in the throttled section (if a pressure output was defined)
-			void update_pressure(RNBODaisy &daisy, uint8_t pressure)
-			{
-				if (vel && pressure != press)
-				{
-					// send pressure
-					daisy.midi_message3(160 + chan, pitch, pressure);
-				}
-				press = pressure;
-			}
-		};
-
-		struct
-		{
-			uint8_t status = 0;
-			uint8_t lastbyte = 0;
-			uint8_t byte[2];
-		} midi;
-
-		daisy::UartHandler uart;
-		uint32_t midi_out_writeidx = 0;
-		uint32_t midi_out_readidx = 0;
-
-		uint8_t midi_in_written = 0; //, midi_out_written = 0;
-		uint8_t midi_in_active = 0, midi_out_active = 0;
-		uint8_t midi_out_data[OOPSY_MIDI_BUFFER_SIZE];
-		float midi_in_data[OOPSY_BLOCK_SIZE];
-		int midi_data_idx = 0;
-		int midi_parse_state = 0;
+		daisy::MidiUartHandler midihandler;
 #endif // OOPSY_TARGET_USES_MIDI_UART
+#ifdef OOPSY_TARGET_USES_MIDI_USB
+		daisy::MidiUsbHandler midihandler;
+#endif
 
 #ifdef OOPSY_TARGET_USES_SDMMC
 		struct WavFormatChunk
@@ -426,16 +368,6 @@ namespace oopsy
 #if defined(OOPSY_TARGET_SEED)
 			hardware.menu_rotate = 0;
 #endif
-#ifdef OOPSY_TARGET_USES_MIDI_UART
-			midi_out_writeidx = 0;
-			midi_out_readidx = 0;
-			midi_data_idx = 0;
-			midi_in_written = 0; //, midi_out_written = 0;
-			midi_in_active = 0, midi_out_active = 0;
-			// reset:
-			midi_message1(255);
-			midi_message3(176, 123, 0);
-#endif
 			blockcount = 0;
 		}
 
@@ -447,6 +379,45 @@ namespace oopsy
 			update = true;
 		}
 #endif
+
+		void HandleMidiMessage(daisy::MidiEvent m)
+		{
+			if (m.type < daisy::MidiMessageType::SystemCommon)
+			{
+				uint8_t midiData[3];
+				switch (m.type)
+				{
+				case daisy::NoteOff:
+					midiData[0] = 0x80 + m.channel;
+					break;
+				case daisy::NoteOn:
+					midiData[0] = 0x90 + m.channel;
+					break;
+				case daisy::PolyphonicKeyPressure:
+					midiData[0] = 0xA0 + m.channel;
+					break;
+				case daisy::ControlChange:
+					midiData[0] = 0xB0 + m.channel;
+					break;
+				case daisy::ProgramChange:
+					midiData[0] = 0xC0 + m.channel;
+					break;
+				case daisy::ChannelPressure:
+					midiData[0] = 0xD0 + m.channel;
+					break;
+				case daisy::PitchBend:
+					midiData[0] = 0xE0 + m.channel;
+					break;
+				default:
+					break;
+				}
+
+				midiData[1] = m.data[0];
+				midiData[2] = m.data[1];
+
+				rnbo->processMidiEvent(RNBO::RNBOTimeNow, 0, midiData, 3);
+			}
+		}
 
 		int run(AppDef *appdefs, int count)
 		{
@@ -481,6 +452,16 @@ namespace oopsy
 			console_line = console_rows - 1;
 #endif
 
+#ifdef OOPSY_TARGET_USES_MIDI_UART
+			daisy::MidiUartHandler::Config midi_cfg;
+			midihandler.Init(midi_cfg);
+#endif
+#ifdef OOPSY_TARGET_USES_MIDI_USB
+			daisy::MidiUsbHandler::Config midi_cfg;
+			midi_cfg.transport_config.periph = daisy::MidiUsbTransport::Config::INTERNAL;
+			midihandler.Init(midi_cfg);
+#endif
+
 			sub_board->adc.Start();
 			sub_board->StartAudio(nullAudioCallback);
 			mainloopCallback = nullMainloopCallback;
@@ -488,25 +469,6 @@ namespace oopsy
 
 #ifdef OOPSY_TARGET_USES_SDMMC
 			sdcard_init();
-#endif
-
-#ifdef OOPSY_TARGET_USES_MIDI_UART
-			midi_out_writeidx = 0;
-			midi_out_readidx = 0;
-			midi_data_idx = 0;
-			midi_in_written = 0; //, midi_out_written = 0;
-			midi_in_active = 0, midi_out_active = 0;
-			daisy::UartHandler::Config config;
-			config.baudrate = 31250;
-			config.periph = daisy::UartHandler::Config::Peripheral::USART_1;
-			config.stopbits = daisy::UartHandler::Config::StopBits::BITS_1;
-			config.parity = daisy::UartHandler::Config::Parity::NONE;
-			config.mode = daisy::UartHandler::Config::Mode::TX_RX;
-			config.wordlength = daisy::UartHandler::Config::WordLength::BITS_8;
-			config.pin_config.rx = {DSY_GPIOB, 7};
-			config.pin_config.tx = {DSY_GPIOB, 6};
-			uart.Init(config);
-			uart.StartRx();
 #endif
 
 			app_selected = 0;
@@ -534,24 +496,8 @@ namespace oopsy
 
 				// handle app-level code (e.g. for CV/gate outs)
 				mainloopCallback(t, dt);
-#ifdef OOPSY_TARGET_USES_MIDI_UART
-				// send data if there's something to read:
-				if (midi_out_readidx != midi_out_writeidx)
-				{
-					uint32_t size = (OOPSY_MIDI_BUFFER_SIZE + midi_out_writeidx - midi_out_readidx) % OOPSY_MIDI_BUFFER_SIZE;
-					size = ((midi_out_readidx + size) <= OOPSY_MIDI_BUFFER_SIZE) ? size : OOPSY_MIDI_BUFFER_SIZE - midi_out_readidx;
-					// for (uint32_t i=0; i<size; i++) log("midi %d", midi_out_data[midi_out_readidx+i]);
-					daisy::UartHandler::Result res = uart.PollTx(midi_out_data + midi_out_readidx, size);
-					if (res == daisy::UartHandler::Result::OK)
-					{
-						midi_out_active = 1;
-						midi_out_readidx = (midi_out_readidx + size) % OOPSY_MIDI_BUFFER_SIZE;
-					}
-					else
-					{
-						log("MIDI transmit err %d", res);
-					}
-				}
+#if defined(OOPSY_TARGET_USES_MIDI_UART) || defined(OOPSY_TARGET_USES_MIDI_USB)
+				midihandler.Listen();
 #endif
 
 				if (uitimer.ready(dt))
@@ -914,8 +860,7 @@ namespace oopsy
 					{
 						int offset = 0;
 #ifdef OOPSY_TARGET_USES_MIDI_UART
-						offset += snprintf(console_stats + offset, console_cols - offset, "%c%c", midi_in_active ? '<' : ' ', midi_out_active ? '>' : ' ');
-						midi_in_active = midi_out_active = 0;
+
 #endif
 						offset += snprintf(console_stats + offset, console_cols - offset, "%02d%%", int(audioCpuUsage));
 						// stats:
@@ -948,15 +893,16 @@ namespace oopsy
 
 		void audio_preperform(size_t size)
 		{
-#ifdef OOPSY_TARGET_USES_MIDI_UART
-			// fill remainder of midi buffer with non-data:
-			for (size_t i = midi_in_written; i < size; i++)
-				midi_in_data[i] = -0.1f;
-			// done with midi input:
-			midi_in_written = 0;
-#endif
+
 
 			hardware.ProcessAllControls();
+
+#if defined(OOPSY_TARGET_USES_MIDI_UART) || defined(OOPSY_TARGET_USES_MIDI_USB)
+			while (midihandler.HasEvents())
+			{
+				HandleMidiMessage(midihandler.PopEvent());
+			}
+#endif
 
 #if defined(OOPSY_TARGET_SEED)
 			menu_button_incr += hardware.menu_rotate;
@@ -1080,102 +1026,7 @@ namespace oopsy
 		}
 
 #if OOPSY_TARGET_USES_MIDI_UART
-		void midi_postperform(float *buf, size_t size)
-		{
-			size_t i = 0;
-			int8_t byte = buf[i] * 256.0f;
-			uint32_t w1 = (midi_out_writeidx + 1) % OOPSY_MIDI_BUFFER_SIZE;
-			while (byte >= 0 && i < size && w1 != midi_out_readidx)
-			{
-				// scale (0.0, 1.0) back to (0, 255) for MIDI bytes
-				midi_out_data[midi_out_writeidx] = byte;
-				midi_out_writeidx = w1;
-				w1 = (midi_out_writeidx + 1) % OOPSY_MIDI_BUFFER_SIZE;
-				i++;
-				byte = buf[i] * 256.0f;
-			}
-			// for (size_t i=0; i<size && midi_out_writeidx+1 < OOPSY_MIDI_BUFFER_SIZE; i++) {
-			// 	if (buf[i] >= 0.f) {
-			// 		// scale (0.0, 1.0) back to (0, 255) for MIDI bytes
-			// 		midi_out_data[midi_out_written] = buf[i] * 256.0f;
-			// 		midi_out_written++;
-			// 	}
-			// }
-		}
 
-		void midi_message1(uint8_t byte)
-		{
-			uint32_t r = (midi_out_readidx + OOPSY_MIDI_BUFFER_SIZE - midi_out_writeidx) % OOPSY_MIDI_BUFFER_SIZE;
-			if (r > 0 && r <= 1)
-			{
-				log("midi buffer full");
-				return;
-			}
-			uint32_t i0 = midi_out_writeidx;
-			uint32_t i1 = (midi_out_writeidx + 1) % OOPSY_MIDI_BUFFER_SIZE;
-			midi_out_data[i0] = byte;
-			midi_out_writeidx = i1;
-		}
-
-		void midi_message2(uint8_t status, uint8_t b1)
-		{
-			uint32_t r = (midi_out_readidx + OOPSY_MIDI_BUFFER_SIZE - midi_out_writeidx) % OOPSY_MIDI_BUFFER_SIZE;
-			if (r > 0 && r <= 2)
-			{
-				log("midi buffer full");
-				return;
-			}
-			uint32_t i0 = midi_out_writeidx;
-			uint32_t i1 = (midi_out_writeidx + 1) % OOPSY_MIDI_BUFFER_SIZE;
-			uint32_t i2 = (midi_out_writeidx + 2) % OOPSY_MIDI_BUFFER_SIZE;
-			midi_out_data[i0] = status;
-			midi_out_data[i1] = b1;
-			midi_out_writeidx = i2;
-		}
-
-		void midi_message3(uint8_t status, uint8_t b1, uint8_t b2)
-		{
-			uint32_t r = (midi_out_readidx + OOPSY_MIDI_BUFFER_SIZE - midi_out_writeidx) % OOPSY_MIDI_BUFFER_SIZE;
-			if (r > 0 && r <= 3)
-			{
-				log("midi buffer full");
-				return;
-			}
-			uint32_t i0 = midi_out_writeidx;
-			uint32_t i1 = (midi_out_writeidx + 1) % OOPSY_MIDI_BUFFER_SIZE;
-			uint32_t i2 = (midi_out_writeidx + 2) % OOPSY_MIDI_BUFFER_SIZE;
-			uint32_t i3 = (midi_out_writeidx + 3) % OOPSY_MIDI_BUFFER_SIZE;
-			midi_out_data[i0] = status;
-			midi_out_data[i1] = b1;
-			midi_out_data[i2] = b2;
-			midi_out_writeidx = i3;
-		}
-
-		// void midi_nullData(Data &data)
-		// {
-		// 	for (int i = 0; i < data.dim; i++)
-		// 	{
-		// 		data.write(-1, i, 0);
-		// 	}
-		// }
-
-		// void midi_fromData(Data &data)
-		// {
-		// 	double b = data.read(midi_data_idx, 0);
-		// 	while (b >= 0. && midi_out_writeidx != midi_out_readidx)
-		// 	{
-		// 		// erase it from [data midi]
-		// 		data.write(-1, midi_data_idx, 0);
-		// 		// write it to our active outbuffer:
-		// 		midi_out_data[midi_out_writeidx] = b;
-		// 		midi_out_writeidx = (midi_out_writeidx + 1) % OOPSY_MIDI_BUFFER_SIZE;
-		// 		// and advance one index in the [data midi]
-		// 		midi_data_idx++;
-		// 		if (midi_data_idx >= data.dim)
-		// 			midi_data_idx = 0;
-		// 		b = data.read(midi_data_idx, 0);
-		// 	}
-		// }
 #endif // OOPSY_TARGET_USES_MIDI_UART
 
 #if (OOPSY_TARGET_FIELD)
