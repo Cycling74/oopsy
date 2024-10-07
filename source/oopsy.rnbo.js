@@ -395,6 +395,8 @@ ${posixify_path(path.relative(build_path, path.join(__dirname, "petal_sm", "dais
 ${includes.length > 0 ? `C_INCLUDES = ${includes.join('\\\n')}` : ``}
 # Library Locations
 LIBDAISY_DIR = ${(posixify_path(path.relative(build_path, path.join(__dirname, "libdaisy"))).replace(" ", "\\ "))}
+APP_TYPE = BOOT_SRAM
+
 ${hardware.defines.OOPSY_TARGET_USES_SDMMC ? `USE_FATFS = 1`:``}
 # Optimize (i.e. CFLAGS += -O3):
 OPT = -O3
@@ -456,6 +458,7 @@ ${hardware.inserts.filter(o => o.where == "header").map(o => o.code).join("\n")}
 
 #define RNBO_USE_FLOAT32
 #define RNBO_NOTHROW
+#define RNBO_NOSTL
 #define RNBO_FIXEDLISTSIZE 64
 #define RNBO_USECUSTOMALLOCATOR
 
@@ -512,6 +515,8 @@ int main(void) {
 						if (err.message.includes("No DFU capable USB device available")) {
 							console.log("oopsy daisy not ready on USB")
 							return;
+						} else if (err.message.includes("Last page at") && err.message.includes("is not writeable")) {
+							console.log("bootloader is missing or in unresponsive state, please follow the HowTo to flash it first. (or just go to the Advanced Section of https://electro-smith.github.io/Programmer/)")
 						} else if (stdout.includes("File downloaded successfully")) {
 							console.log("oopsy flashed")
 						} else {
@@ -520,9 +525,18 @@ int main(void) {
 							return;
 						}
 					} else if (stderr) {
-						console.log("oopsy dfu error")
-						console.log(stderr);
-						return;
+						// ignore these, it is a well known DFU export error
+						stderr = stderr.replace("dfu-util: Warning: Invalid DFU suffix signature\n", "");
+						stderr = stderr.replace("dfu-util: A valid DFU suffix will be required in a future dfu-util release\n", "");
+
+						if (stderr.length) {
+							console.log("oopsy dfu error")
+							console.log(stderr);
+							return;	
+						}
+						else {
+							console.log("oopsy flashed")
+						}
 					}
 				});
 			}
@@ -545,7 +559,9 @@ int main(void) {
 							if (err.message.includes("No DFU capable USB device available")) {
 								console.log("oopsy daisy not ready on USB")
 								return;
-							} else if (stdout.includes("File downloaded successfully")) {
+							} else if (err.message.includes("Last page at") && err.message.includes("is not writeable")) {
+								console.log("bootloader is missing or in unresponsive state, please follow the HowTo to flash it first. (or just go to the Advanced Section of https://electro-smith.github.io/Programmer/)")
+							} if (stdout.includes("File downloaded successfully")) {
 								console.log("oopsy flashed")
 							} else {
 								console.log("oopsy dfu error")
@@ -553,9 +569,18 @@ int main(void) {
 								return;
 							}
 						} else if (stderr) {
-							console.log("oopsy dfu error")
-							console.log(stderr);
-							return;
+							// ignore these, it is a well known DFU export error
+							stderr = stderr.replace("dfu-util: Warning: Invalid DFU suffix signature\n", "");
+							stderr = stderr.replace("dfu-util: A valid DFU suffix will be required in a future dfu-util release\n", "");
+
+							if (stderr.length) {
+								console.log("oopsy dfu error")
+								console.log(stderr);
+								return;	
+							}
+							else {
+								console.log("oopsy flashed")
+							}
 						}
 					});
 				}
