@@ -78,8 +78,6 @@ function configure(doExport) {
                     confdict.set("fixedblocksize", Number(blocksize));
                 }
 
-                post(confdict.stringify());
-
 				if (doExport) {
 					obj.message("export", "cpp-export", "cpp-code-export", confname);
 

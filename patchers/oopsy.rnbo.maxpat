@@ -10,7 +10,7 @@
 		}
 ,
 		"classnamespace" : "box",
-		"rect" : [ 297.0, 101.0, 1045.0, 808.0 ],
+		"rect" : [ 297.0, 101.0, 1046.0, 808.0 ],
 		"bglocked" : 0,
 		"openinpresentation" : 1,
 		"default_fontsize" : 12.0,
@@ -40,6 +40,56 @@
 		"assistshowspatchername" : 0,
 		"cluebar" : 0,
 		"boxes" : [ 			{
+				"box" : 				{
+					"id" : "obj-64",
+					"linecount" : 4,
+					"maxclass" : "message",
+					"numinlets" : 2,
+					"numoutlets" : 1,
+					"outlettype" : [ "" ],
+					"patching_rect" : [ 1044.0, 634.0, 283.0, 62.0 ],
+					"text" : "symbol \"bootloader not available or unresponsive ! use https://electro-smith.github.io/Programmer/ to flash it and/or activate it with a short press to Reset followed by Boot\""
+				}
+
+			}
+, 			{
+				"box" : 				{
+					"fontsize" : 12.0,
+					"id" : "obj-59",
+					"maxclass" : "newobj",
+					"numinlets" : 2,
+					"numoutlets" : 3,
+					"outlettype" : [ "", "bang", "bang" ],
+					"patching_rect" : [ 1044.0, 724.0, 96.0, 22.0 ],
+					"text" : "dialog @mode 1"
+				}
+
+			}
+, 			{
+				"box" : 				{
+					"id" : "obj-58",
+					"maxclass" : "newobj",
+					"numinlets" : 2,
+					"numoutlets" : 2,
+					"outlettype" : [ "bang", "" ],
+					"patching_rect" : [ 1044.0, 602.0, 50.0, 22.0 ],
+					"text" : "select 1"
+				}
+
+			}
+, 			{
+				"box" : 				{
+					"id" : "obj-52",
+					"maxclass" : "newobj",
+					"numinlets" : 2,
+					"numoutlets" : 1,
+					"outlettype" : [ "int" ],
+					"patching_rect" : [ 1044.0, 570.0, 210.0, 22.0 ],
+					"text" : "string.contains \"bootloader is missing\""
+				}
+
+			}
+, 			{
 				"box" : 				{
 					"id" : "obj-46",
 					"maxclass" : "newobj",
@@ -190,7 +240,7 @@
 					"numinlets" : 2,
 					"numoutlets" : 1,
 					"outlettype" : [ "int" ],
-					"patching_rect" : [ 946.0, 539.0, 33.0, 22.0 ],
+					"patching_rect" : [ 990.0, 534.0, 33.0, 22.0 ],
 					"text" : "== 0"
 				}
 
@@ -202,7 +252,7 @@
 					"numinlets" : 1,
 					"numoutlets" : 1,
 					"outlettype" : [ "" ],
-					"patching_rect" : [ 946.0, 483.0, 70.0, 22.0 ],
+					"patching_rect" : [ 990.0, 478.0, 70.0, 22.0 ],
 					"text" : "loadmess 1"
 				}
 
@@ -386,7 +436,7 @@
 					"numoutlets" : 2,
 					"outlettype" : [ "", "" ],
 					"parameter_enable" : 1,
-					"patching_rect" : [ 946.0, 508.0, 62.0, 16.0 ],
+					"patching_rect" : [ 990.0, 503.0, 62.0, 16.0 ],
 					"presentation" : 1,
 					"presentation_rect" : [ -1.0, 37.0, 55.5, 15.0 ],
 					"saved_attribute_attributes" : 					{
@@ -894,7 +944,7 @@
 
 							}
  ],
-						"originid" : "pat-10"
+						"originid" : "pat-201"
 					}
 ,
 					"patching_rect" : [ 312.75, 280.0, 66.0, 22.0 ],
@@ -1243,7 +1293,7 @@
 
 							}
  ],
-						"originid" : "pat-12"
+						"originid" : "pat-203"
 					}
 ,
 					"patching_rect" : [ 539.0, 654.0, 53.0, 22.0 ],
@@ -1401,7 +1451,7 @@
 					"numinlets" : 2,
 					"numoutlets" : 2,
 					"outlettype" : [ "", "" ],
-					"patching_rect" : [ 784.0, 524.0, 102.0, 22.0 ],
+					"patching_rect" : [ 784.0, 531.0, 102.0, 22.0 ],
 					"text" : "route terminated"
 				}
 
@@ -1429,15 +1479,16 @@
 					"numinlets" : 1,
 					"numoutlets" : 2,
 					"outlettype" : [ "", "" ],
-					"patching_rect" : [ 539.0, 493.0, 430.0, 26.0 ],
+					"patching_rect" : [ 539.0, 493.0, 264.0, 26.0 ],
 					"saved_object_attributes" : 					{
 						"autostart" : 0,
 						"defer" : 0,
-						"options" : [ "--inspect-brk" ],
+						"node_bin_path" : "",
+						"npm_bin_path" : "",
 						"watch" : 0
 					}
 ,
-					"text" : "node.script oopsy.rnbo.node4max.js @options --inspect-brk",
+					"text" : "node.script oopsy.rnbo.node4max.js",
 					"textfile" : 					{
 						"filename" : "oopsy.rnbo.node4max.js",
 						"flags" : 0,
@@ -1455,7 +1506,7 @@
 					"numinlets" : 1,
 					"numoutlets" : 1,
 					"outlettype" : [ "" ],
-					"patching_rect" : [ 539.0, 450.0, 111.0, 22.0 ],
+					"patching_rect" : [ 539.0, 443.0, 111.0, 22.0 ],
 					"text" : "prepend script start"
 				}
 
@@ -1611,10 +1662,10 @@
 
 							}
  ],
-						"originid" : "pat-14"
+						"originid" : "pat-205"
 					}
 ,
-					"patching_rect" : [ 906.0, 398.0, 54.0, 22.0 ],
+					"patching_rect" : [ 711.5, 398.0, 54.0, 22.0 ],
 					"saved_object_attributes" : 					{
 						"description" : "",
 						"digest" : "",
@@ -1973,6 +2024,7 @@
 , 			{
 				"patchline" : 				{
 					"destination" : [ "obj-13", 1 ],
+					"order" : 1,
 					"source" : [ "obj-42", 1 ]
 				}
 
@@ -1981,6 +2033,14 @@
 				"patchline" : 				{
 					"destination" : [ "obj-44", 0 ],
 					"source" : [ "obj-42", 0 ]
+				}
+
+			}
+, 			{
+				"patchline" : 				{
+					"destination" : [ "obj-52", 0 ],
+					"order" : 0,
+					"source" : [ "obj-42", 1 ]
 				}
 
 			}
@@ -2057,6 +2117,13 @@
 			}
 , 			{
 				"patchline" : 				{
+					"destination" : [ "obj-58", 0 ],
+					"source" : [ "obj-52", 0 ]
+				}
+
+			}
+, 			{
+				"patchline" : 				{
 					"destination" : [ "obj-47", 0 ],
 					"source" : [ "obj-54", 0 ]
 				}
@@ -2072,6 +2139,13 @@
 			}
 , 			{
 				"patchline" : 				{
+					"destination" : [ "obj-64", 0 ],
+					"source" : [ "obj-58", 0 ]
+				}
+
+			}
+, 			{
+				"patchline" : 				{
 					"destination" : [ "obj-34", 0 ],
 					"source" : [ "obj-6", 0 ]
 				}
@@ -2081,6 +2155,13 @@
 				"patchline" : 				{
 					"destination" : [ "obj-16", 0 ],
 					"source" : [ "obj-62", 1 ]
+				}
+
+			}
+, 			{
+				"patchline" : 				{
+					"destination" : [ "obj-59", 0 ],
+					"source" : [ "obj-64", 0 ]
 				}
 
 			}
@@ -2120,7 +2201,7 @@
 
 			}
  ],
-		"originid" : "pat-8",
+		"originid" : "pat-199",
 		"oscsendmode" : 0,
 		"oscsendudpaddr" : "127.0.0.1",
 		"oscsendudpport" : 30337,
