@@ -567,15 +567,17 @@ function analyze_json(jsonstr, hardware, desc_path)
 	});
 
 	desc.parameters.forEach(param => {
-		let paramdesc = {
-			name: param.name,
-			cindex: param.index,
-			default: param.initialValue,
-			min: param.minimum,
-			max: param.maximum
-		};
-
-		rnbo.params.push(paramdesc);
+		if (param.visible) {
+			let paramdesc = {
+				name: param.name,
+				cindex: param.index,
+				default: param.initialValue,
+				min: param.minimum,
+				max: param.maximum
+			};
+	
+			rnbo.params.push(paramdesc);	
+		}
 	});
 
 	return rnbo;
@@ -750,7 +752,7 @@ function generate_app(app, hardware, target, config) {
 	})
 
 	rnbo.params = app.patch.params.map((param, i)=>{
-		const varname = "rnbo_param_"+param.name;
+		const varname = "rnbo_param_"+ param.name + "_" + param.cindex;
 		let src, label=param.name, type="float";
 
 		let node = Object.assign({
@@ -887,16 +889,18 @@ struct App_${name} : public oopsy::App<App_${name}> {
 	${rnbo.params
 		.map(name=>`
 	${nodes[name].type} ${name};`).join("")}
-	${rnbo.audio_outs.map(name=>nodes[name]).filter(node => node && node.midi_type).map(node=>`
-	${node.type} ${node.varname};`).join("")}
-	${daisy.device_outs.map(name => nodes[name])
+	${rnbo.audio_outs
+		.map(name=>nodes[name])
+		.filter(node => node && node.midi_type).map(node=>
+			`${node.type} ${node.varname};`).join("")}
+	${daisy.device_outs
+		.map(name => nodes[name])
 		.filter(node => node.src || node.from.length)
-		.map(node=>`
-	float ${node.name};`).join("")}
-	${app.audio_outs.map(name=>`
-	float ${name}[OOPSY_BLOCK_SIZE];`).join("")}
-
-	RNBO::${name}<> *rnbo;
+		.map(node=>
+			`float ${node.name};`).join("")}
+	${app.audio_outs
+		.map(name=>
+			`float ${name}[OOPSY_BLOCK_SIZE];`).join("")}
 
 	void init(oopsy::RNBODaisy& daisy) {
 		rnbo = new RNBO::${name}<>();
@@ -950,11 +954,7 @@ struct App_${name} : public oopsy::App<App_${name}> {
 			.filter(node => node.src)
 			.filter(node => node.where == "audio" || node.where == undefined)
 			.map(node=>`
-		${node.varname} = (${node.type})(${node.src}*${asCppNumber(node.range)} + ${asCppNumber(node.min + (node.type == "int" || node.type == "bool" ? 0.5 : 0))});`).join("")}
-		${rnbo.params
-			.map(name=>nodes[name])
-			.map(node=>`
-		rnbo->setParameterValue(${node.cindex}, ${node.varname}, RNBO::RNBOTimeNow);`).join("")}
+		${node.varname} = setParamIfChanged(${node.cindex},  ${node.varname}, (${node.type})(${node.src}*${asCppNumber(node.range)} + ${asCppNumber(node.min + (node.type == "int" || node.type == "bool" ? 0.5 : 0))}));`).join("")}
 		${daisy.audio_ins.map((name, i)=>`
 		float * ${name} = (float *)hardware_ins[${i}];`).join("")}
 		${daisy.audio_outs.map((name, i)=>`
