@@ -1065,6 +1065,15 @@ namespace oopsy
 	struct App
 	{
 
+		RNBO::PatcherInterface *rnbo;
+
+		float setParamIfChanged(RNBO::ParameterIndex index, float oldValue, float newValue) {
+			if (newValue != oldValue) {
+				rnbo->setParameterValue(index, newValue, RNBO::RNBOTimeNow);
+			}
+			return newValue;
+		}
+
 		static void staticMainloopCallback(uint32_t t, uint32_t dt)
 		{
 			T &self = *(T *)daisy.app;
