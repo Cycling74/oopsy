@@ -27,9 +27,7 @@ setInterval(function() {
 	}
 }, 250)
 
-try {
-	run(...process.argv.slice(2))
-
-} catch(e) {
-	maxAPI.post(e.message ? e.message : e, maxAPI.POST_LEVELS.ERROR);
-}
+run(...process.argv.slice(2))
+.catch(error => { 
+	maxAPI.post(error ? error : error, maxAPI.POST_LEVELS.ERROR); 
+});
