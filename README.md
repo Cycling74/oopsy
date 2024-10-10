@@ -1,12 +1,12 @@
-# Oopsy: Gen~ to Daisy
+# Oopsy: Gen~ and RNBO to Daisy
 
-Exporting Max Gen patchers for the ElectroSmith Daisy hardware platforms.
+Exporting Max Gen or RNBO patchers for the ElectroSmith Daisy hardware platforms.
 
 [![Oopsy on Youtube](https://img.youtube.com/vi/fbd1CASqUmI/0.jpg)](https://www.youtube.com/playlist?list=PLZbxc8QYjD1eJHJEjzDkNB_zshbnVN6CH)
 
-Each Daisy binary can hold several gen~ patcher "apps", which can be switched between using the encoder (or switches on the DaisyField).
+Each Daisy binary can hold several gen~ patcher "apps", which can be switched between using the encoder (or switches on the DaisyField), for RNBO we currently only support one patcher per binary
 
-## How gen~ features map to Daisy
+## How gen~ and RNBO features map to Daisy
 
 Mostly this works by adding an appropriate name to the `in`, `out`, and `param` objects, but many features will also auto-map without special naming.
 
@@ -33,15 +33,22 @@ Hardware voltages are mapped to gen~ -1..1
 
 ### MIDI
 
-For [MIDI input](https://github.com/electro-smith/oopsy/wiki/MIDI-Input) and [MIDI output](https://github.com/electro-smith/oopsy/wiki/MIDI-output) features, see the wiki pages documentation.
+For gen~ [MIDI input](https://github.com/electro-smith/oopsy/wiki/MIDI-Input) and [MIDI output](https://github.com/electro-smith/oopsy/wiki/MIDI-output) features, see the wiki pages documentation.
+
+Since RNBO supports MIDI there is no extra workarounds via parameters or history objects necessary, you can directly use MIDI objects like `notein` or `midiout`
 
 ## Using from within Max
 
-Drop a new `oopsy.patch` / `oopsy.field` etc. as desired object into a Max patch that contains one or more `gen~` objects. Or, use the templates from **File > New from Template > Oopsy_X**. Make sure the Max patch is saved. 
+Drop a new `oopsy.patch` / `oopsy.field` etc. as desired object into a Max patch that contains one or more `gen~` objects or one `rnbo~` object. Or, use the templates from **File > New from Template > Oopsy_X**. Make sure the Max patch is saved. 
 
 - Every time the Max patch is saved, it will trigger code generation and compilation, and will try to upload to a Daisy device if one is attached.
 - You can also send `bang` to the `oopsy` bpatcher to manually trigger this.
 - All the gen~ objects in the patcher will be uploaded to the device as "apps" which you can switch between dynamically.
+
+*Note:*  to be used for RNBO you need to flash the bootloader to your Daisy device first, most easily using the [Daisy Web Programmer](https://electro-smith.github.io/Programmer/) (look for the `Advanced` Button in the `Programmin` section).
+
+After you flashed the bootloader, you will have to set it into receiving mode each time before you export. This is done by shortly pressing and releaseing the `Reset` button and then shortly pressing and releaseing the `Boot` button (one LED will then start to flash slowly in a kind of 'breathing' fashion). 
+
 ### Multi-App
 
 Oopsy supports flashing Patch, Field, and Petal with multiple apps -- by default it will include every gen~ object in the same patcher as your `oopsy` bpatcher. The method to select apps depends on the target:
@@ -64,7 +71,7 @@ node oopsy.js field ../examples/simple.cpp
 # etc.
 ```
 
-- If the Daisy is plugged in via USB and ready to accept firmware (the two tact switches on the Daisy Seed have been pressed) then the oopsy script will upload the binary to the hardware (otherwise you'll get the harmless "Error '74") 
+- If the Daisy is plugged in via USB and ready to accept firmware (the two tact switches on the Daisy Seed have been pressed, or, if the bootloader is present, you shprtly pressed `Rests` and then `Boot`) then the oopsy script will upload the binary to the hardware (otherwise you'll get the harmless "Error '74") 
 - Up to eight cpp files can be mentioned in the arguments; they will all be loaded onto the Daisy, with a simple menu system to switch between them. Use long encoder press to go into mode selection, rotate until you get the app menu, and release. Now rotate the encoder to select the app, and short press the encoder to load it. (On the Patch, use SW1 long press to go into mode selection, SW2 to swich mode until you get the app menu, release SW1; then press SW2 to select app, and SW1 to load it.)
 - If the `watch` keyword is added to the oopsy.js arguments, it will re-run the process every time any of the cpp files change -- which is handy since gen~ will re-export on every edit.
 - For a custom hardware configuration (other than Patch/Field/Petal/Pod) you can specify a JSON file in the arguments.
