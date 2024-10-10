@@ -45,12 +45,42 @@ const [ build_tools_path, has_dfu_util ] = checkBuildEnvironment();
 
 let watchers = []
 
+function RNBOLibError () {};
+RNBOLibError.prototype = new Error();
+
 // the script can be invoked directly as a command-line program,
 // or it can be embedded as a node module
 if (require.main === module) {
 	run(...process.argv.slice(2))
 } else {
-	module.exports = run;
+	module.exports = function() {
+		let args = [...arguments];
+		let retryCount = 5;
+		let interval = 0;
+		return new Promise(function tryRun(resolve, reject) {
+			if (--retryCount > 0) {
+				setTimeout(function() {
+					try {
+						run(...args);
+						resolve();
+					}
+					catch (e) {
+						interval = 1000;
+						if (e instanceof RNBOLibError) {
+							console.log("Could not find RNBO Lib retrying.");
+							return tryRun(resolve, reject);
+						}
+						else {
+							reject(e.message);
+						}
+					}
+				}, interval);
+			}
+			else {
+				reject('Error looking for RNBO Libs.');
+			}
+		});
+	}
 }
 
 function run() {
@@ -156,6 +186,11 @@ function run() {
 		if (acc.indexOf(s) === -1) acc.push(s)
 		return acc
 	}, []);
+
+	var rnboLibSrcPath = path.join(path.dirname(cpps[cpps.length - 1]), "common")
+	var libAvailable = fs.existsSync(rnboLibSrcPath)
+	if (!libAvailable) throw new RNBOLibError();
+
 	cpps.sort((a,b)=>{
 		return path.basename(a) < path.basename(b) ? -1 : 0;
 	})
@@ -299,6 +334,7 @@ function run() {
 		console.log(`this target does not support more than ${hardware.max_apps} apps`)
 		cpps.length = hardware.max_apps
 	}
+
 	let apps = cpps.map(cpp_path => {
 		var basepath = path.dirname(cpp_path);
 		var descfile = path.join(basepath, "description.json")
@@ -318,10 +354,10 @@ function run() {
 	fs.mkdirSync(build_path, {recursive: true});
 
 	// now move the actual RNBO lib sources to the build path)
-	var rnboLibPath = path.join(build_path, "common"); 
+	var rnboLibPath = path.join(build_path, "common");
 	if (apps.length) {
 		fs.rmSync(rnboLibPath, { force: true, recursive: true });
-		fs.renameSync(path.join(path.dirname(apps[0].path), "common"), rnboLibPath);
+		fs.renameSync(rnboLibSrcPath, rnboLibPath);
 	}
 
 	let config = {
