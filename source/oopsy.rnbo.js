@@ -497,6 +497,7 @@ ${hardware.inserts.filter(o => o.where == "header").map(o => o.code).join("\n")}
 #define RNBO_NOSTL
 #define RNBO_FIXEDLISTSIZE 64
 #define RNBO_USECUSTOMALLOCATOR
+#define RNBO_NO_PATCHERFACTORY
 
 #include "../rnbo_daisy.h"
 

@@ -39,23 +39,25 @@ Since RNBO supports MIDI there is no extra workarounds via parameters or history
 
 ## Using from within Max
 
-Drop a new `oopsy.patch` / `oopsy.field` etc. as desired object into a Max patch that contains one or more `gen~` objects or one `rnbo~` object. Or, use the templates from **File > New from Template > Oopsy_X**. Make sure the Max patch is saved. 
+Drop a new `oopsy.patch` / `oopsy.field` etc. as desired object into a Max patch that contains one or more `gen~` or `rnbo~` objects. Or, use the templates from **File > New from Template > Oopsy_X**. Make sure the Max patch is saved. 
 
 - Every time the Max patch is saved, it will trigger code generation and compilation, and will try to upload to a Daisy device if one is attached.
 - You can also send `bang` to the `oopsy` bpatcher to manually trigger this.
-- All the gen~ objects in the patcher will be uploaded to the device as "apps" which you can switch between dynamically.
+- All the gen~ or rnbo~ objects in the patcher will be uploaded to the device as "apps" which you can switch between dynamically.
 
-*Note:*  to be used for RNBO you need to flash the bootloader to your Daisy device first, most easily using the [Daisy Web Programmer](https://electro-smith.github.io/Programmer/) (look for the `Advanced` Button in the `Programmin` section).
+*Note:*  to be used for RNBO you need to flash the bootloader to your Daisy device first, the easiest way would be using the [Daisy Web Programmer](https://electro-smith.github.io/Programmer/) (look for the `Advanced` Button in the `Programming` section).
 
 After you flashed the bootloader, you will have to set it into receiving mode each time before you export. This is done by shortly pressing and releaseing the `Reset` button and then shortly pressing and releaseing the `Boot` button (one LED will then start to flash slowly in a kind of 'breathing' fashion). 
 
 ### Multi-App
 
-Oopsy supports flashing Patch, Field, and Petal with multiple apps -- by default it will include every gen~ object in the same patcher as your `oopsy` bpatcher. The method to select apps depends on the target:
+Oopsy supports flashing Patch, Field, and Petal with multiple apps -- by default it will include every gen~ or rnbo~ object in the same patcher as your `oopsy` bpatcher. The method to select apps depends on the target:
 
 - **Patch**: Long-hold the encoder to enter mode selection; rotate until you get to the app menu, and release the encoder. The currently-loaded app is displayed in inverted text. Rotate the encoder to select an app (marked with `>`) and push to load it. 
 - **Field**: Long-hold SW1 to enter mode selection; tap SW2 until you get to the app menu, and release SW1. The currently-loaded app is displayed in inverted text. Tap SW2 to select an app (marked with `>`) and push SW1 to load it. 
 - **Petal**: Hold the encoder down to go app selection. The currently-loaded app is displayed as a white led, and blue leds indicate available app slots. Rotate the encoder to select the desired app and release to load it.
+
+Additionally sending a Program Change message will also change the selected app.
 
 ## Using from the command line via Node.js
 
@@ -91,7 +93,9 @@ For details of the licensing terms of code exported from gen~ see https://suppor
 - Electrosmith: https://forum.electro-smith.com/c/integrations/oopsy-max-msp-gen
 - Cycling '74: https://cycling74.com/forums/oopsy 
 - MW: https://www.muffwiggler.com/forum/viewtopic.php?f=16&t=242322
+- RNBO: https://rnbo.cycling74.com/
 
 -----
 
 Oopsy was authored by [Graham](https://github.com/grrrwaaa) [Wakefield](http://alicelab.world) in 2020-2021.
+and adapted to RNBO by [Stefan Brunner](https://ww.klingt.org) in 2024
