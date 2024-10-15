@@ -1001,7 +1001,7 @@ struct App_${name} : public oopsy::App<App_${name}> {
 			`float ${name}[OOPSY_BLOCK_SIZE];`).join("")}
 
 	void init(oopsy::RNBODaisy& daisy) {
-		rnbo = new RNBO::${name}<>();
+		rnbo = new RNBO::${name}<oopsy::RNBOEngine>();
 		daisy.rnbo = rnbo;
 
 		// initialize RNBO, here for example audio samples are allocated in the SDRAM (through our allocator)
