@@ -10,7 +10,7 @@
 		}
 ,
 		"classnamespace" : "box",
-		"rect" : [ 218.0, 214.0, 664.0, 480.0 ],
+		"rect" : [ 315.0, 212.0, 664.0, 480.0 ],
 		"bglocked" : 0,
 		"openinpresentation" : 0,
 		"default_fontsize" : 12.0,
@@ -1512,7 +1512,7 @@
 
 							}
  ],
-						"originid" : "pat-6"
+						"originid" : "pat-36"
 					}
 ,
 					"patching_rect" : [ 288.0, 325.0, 99.0, 22.0 ],
@@ -4848,7 +4848,7 @@
 
 							}
  ],
-						"originid" : "pat-8"
+						"originid" : "pat-38"
 					}
 ,
 					"patching_rect" : [ 53.0, 272.0, 221.0, 22.0 ],
@@ -5082,18 +5082,6 @@
 			}
 , 			{
 				"box" : 				{
-					"id" : "obj-10",
-					"maxclass" : "message",
-					"numinlets" : 2,
-					"numoutlets" : 1,
-					"outlettype" : [ "" ],
-					"patching_rect" : [ 336.0, 233.0, 89.0, 22.0 ],
-					"text" : "writecppsource"
-				}
-
-			}
-, 			{
-				"box" : 				{
 					"attr" : "knob1_level",
 					"id" : "obj-3",
 					"maxclass" : "attrui",
@@ -5107,13 +5095,6 @@
 			}
  ],
 		"lines" : [ 			{
-				"patchline" : 				{
-					"destination" : [ "obj-2", 0 ],
-					"source" : [ "obj-10", 0 ]
-				}
-
-			}
-, 			{
 				"patchline" : 				{
 					"destination" : [ "obj-7", 1 ],
 					"source" : [ "obj-2", 1 ]
@@ -5163,7 +5144,7 @@
 
 			}
  ],
-		"originid" : "pat-4",
+		"originid" : "pat-34",
 		"parameters" : 		{
 			"obj-1::obj-32" : [ "live.text[2]", "FILTER", 0 ],
 			"obj-1::obj-33" : [ "live.text[1]", "FILTER", 0 ],

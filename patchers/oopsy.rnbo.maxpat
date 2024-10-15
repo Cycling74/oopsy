@@ -41,28 +41,6 @@
 		"cluebar" : 0,
 		"boxes" : [ 			{
 				"box" : 				{
-					"id" : "obj-48",
-					"maxclass" : "newobj",
-					"numinlets" : 1,
-					"numoutlets" : 0,
-					"patching_rect" : [ 895.0, 398.0, 59.0, 22.0 ],
-					"text" : "print path"
-				}
-
-			}
-, 			{
-				"box" : 				{
-					"id" : "obj-53",
-					"maxclass" : "newobj",
-					"numinlets" : 1,
-					"numoutlets" : 0,
-					"patching_rect" : [ 710.0, 447.0, 42.0, 22.0 ],
-					"text" : "print 1"
-				}
-
-			}
-, 			{
-				"box" : 				{
 					"id" : "obj-64",
 					"linecount" : 4,
 					"maxclass" : "message",
@@ -966,7 +944,7 @@
 
 							}
  ],
-						"originid" : "pat-12"
+						"originid" : "pat-96"
 					}
 ,
 					"patching_rect" : [ 312.75, 280.0, 66.0, 22.0 ],
@@ -1291,7 +1269,7 @@
 
 							}
  ],
-						"originid" : "pat-14"
+						"originid" : "pat-98"
 					}
 ,
 					"patching_rect" : [ 539.0, 654.0, 53.0, 22.0 ],
@@ -1324,7 +1302,7 @@
 					"bordercolor" : [ 0.223529411764706, 0.223529411764706, 0.223529411764706, 1.0 ],
 					"fontsize" : 10.0,
 					"id" : "obj-47",
-					"linecount" : 6,
+					"linecount" : 5,
 					"maxclass" : "textedit",
 					"numinlets" : 1,
 					"numoutlets" : 4,
@@ -1337,7 +1315,7 @@
 					"readonly" : 1,
 					"rounded" : 0.0,
 					"separator" : "newline",
-					"text" : "simplesynth_sine compiling...\rgenerated code\rdaisy not ready on USB\rflashing...\rcreated binary 170KB\r",
+					"text" : "miditest compiling...\rgenerated code\rdaisy not ready on USB\rflashing...\rcreated binary 136KB\r",
 					"textcolor" : [ 1.0, 1.0, 1.0, 1.0 ]
 				}
 
@@ -1479,15 +1457,14 @@
 					"numinlets" : 1,
 					"numoutlets" : 2,
 					"outlettype" : [ "", "" ],
-					"patching_rect" : [ 539.0, 493.0, 475.0, 26.0 ],
+					"patching_rect" : [ 539.0, 493.0, 264.0, 26.0 ],
 					"saved_object_attributes" : 					{
 						"autostart" : 0,
 						"defer" : 0,
-						"options" : [ "--inspect-brk=9229" ],
 						"watch" : 0
 					}
 ,
-					"text" : "node.script oopsy.rnbo.node4max.js @options --inspect-brk=9229",
+					"text" : "node.script oopsy.rnbo.node4max.js",
 					"textfile" : 					{
 						"filename" : "oopsy.rnbo.node4max.js",
 						"flags" : 0,
@@ -1735,7 +1712,7 @@
 
 							}
  ],
-						"originid" : "pat-16"
+						"originid" : "pat-100"
 					}
 ,
 					"patching_rect" : [ 711.5, 398.0, 54.0, 22.0 ],
@@ -1761,7 +1738,7 @@
 					"outlettype" : [ "", "", "" ],
 					"patching_rect" : [ 539.0, 396.0, 151.0, 26.0 ],
 					"saved_object_attributes" : 					{
-						"filename" : "oopsy.rnbo.snoop.js",
+						"filename" : "oopsy.rnbo.snoop",
 						"parameter_enable" : 0
 					}
 ,
@@ -1779,16 +1756,7 @@
 			}
 , 			{
 				"patchline" : 				{
-					"destination" : [ "obj-48", 0 ],
-					"order" : 0,
-					"source" : [ "obj-12", 0 ]
-				}
-
-			}
-, 			{
-				"patchline" : 				{
 					"destination" : [ "obj-5", 1 ],
-					"order" : 1,
 					"source" : [ "obj-12", 0 ]
 				}
 
@@ -2156,7 +2124,6 @@
 , 			{
 				"patchline" : 				{
 					"destination" : [ "obj-40", 0 ],
-					"order" : 1,
 					"source" : [ "obj-5", 0 ]
 				}
 
@@ -2165,14 +2132,6 @@
 				"patchline" : 				{
 					"destination" : [ "obj-50", 1 ],
 					"source" : [ "obj-5", 1 ]
-				}
-
-			}
-, 			{
-				"patchline" : 				{
-					"destination" : [ "obj-53", 0 ],
-					"order" : 0,
-					"source" : [ "obj-5", 0 ]
 				}
 
 			}
@@ -2284,7 +2243,7 @@
 
 			}
  ],
-		"originid" : "pat-10",
+		"originid" : "pat-94",
 		"oscsendmode" : 0,
 		"oscsendudpaddr" : "127.0.0.1",
 		"oscsendudpport" : 30337,

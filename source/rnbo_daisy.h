@@ -14,6 +14,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 #include "daisy.h"
 #include "RNBO_PatcherInterface.h"
+#include "RNBO_MinimalEngine.h"
 #include "daisy_seed.h"
 #include "tlsf.h"
 
@@ -1117,6 +1118,34 @@ namespace oopsy
 		}
 #endif // defined(OOPSY_TARGET_HAS_OLED) && defined(OOPSY_HAS_PARAM_VIEW)
 	};
+
+
+	class RNBOEngine : public RNBO::MinimalEngine<>
+	{
+	public:
+		RNBOEngine(RNBO::PatcherInterface* patcher)
+		: RNBO::MinimalEngine<>(patcher)
+		{}
+
+		void sendMidiEvent(int port, int b1, int b2, int b3, RNBO::MillisecondTime time = 0.0) override {
+			uint8_t bytes[3];
+			bytes[0] = (uint8_t)b1;
+			bytes[1] = (uint8_t)b2;
+			bytes[2] = (uint8_t)b3;
+
+			daisy.midihandler.SendMessage(bytes, 3);
+		}
+
+		void sendMidiEventList(int port, const RNBO::list& data, RNBO::MillisecondTime time = 0.0) override {
+			uint8_t bytes[RNBO_FIXEDLISTSIZE];
+			const auto listlength = data.length < RNBO_FIXEDLISTSIZE ? data.length : RNBO_FIXEDLISTSIZE;
+			for (size_t i = 0; i < listlength; i++) {
+				bytes[i] = data[i];
+			}
+			daisy.midihandler.SendMessage(bytes, listlength);
+		}
+	};
+
 };
 
 #endif // RNBO_DAISY_H
