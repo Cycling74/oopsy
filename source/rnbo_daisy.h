@@ -401,6 +401,7 @@ namespace oopsy
 					break;
 				case daisy::ProgramChange:
 					midiData[0] = 0xC0 + m.channel;
+					schedule_app_load(m.data[0]);
 					break;
 				case daisy::ChannelPressure:
 					midiData[0] = 0xD0 + m.channel;

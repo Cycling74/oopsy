@@ -14,10 +14,19 @@ var sep = "/";
 var dict = new Dict();
 
 function bang() {
-	configure(true);
+	configure();
 }
 
-function configure(doExport) {
+function fileExists(fileName) {
+	file = new File(fileName, "read");
+	if (file.isopen) { //if succeed in opening file
+		file.close();
+		return (true);
+	} else { //file doesn't exist
+		return (false);
+	}
+}
+function configure() {
 	var pat = this.patcher.parentpatcher;
 	var topmost_pat = pat;
 	while (topmost_pat.parentpatcher) {
@@ -32,13 +41,15 @@ function configure(doExport) {
 	// send message out to convert this path
 	// response will update the variable `path`:
 	outlet(2, export_path);
+	export_path = path + "/";
 
 	var names = [];
 	var cpps = [];
 	var errors = 0;
+	var configurations = [];
 
 	// find gen~ objects in a patcher:
-	function find_gens(pat) {
+	function findRnboObjects(pat) {
 		dict.clear();
 		var default_name = pat.name || "rnbo";
 		// iterate all gen~ objects in the patcher
@@ -47,7 +58,7 @@ function configure(doExport) {
 		while (obj) {
 			if (obj.maxclass.toString() == "patcher") {
 				var subpat = obj.subpatcher()
-				if (subpat) find_gens(subpat);
+				if (subpat) findRnboObjects(subpat);
 				
 			} else if (obj.maxclass.toString() == "rnbo~") {
 				var name = default_name;
@@ -56,20 +67,14 @@ function configure(doExport) {
 				}
 
                 if (name == "untitled") name = "rnbo";
-
-				// sanitize:
 				name = safename(name);
-				// sanitize via scripting name too:
-				// while (name != obj.varname.toString()) {
-				// 	// try to apply it:
-				// 	obj.varname = name;
-				// 	name = safename(obj.varname);
-				// }
 
-                var confname = name + "_conf";
-                var confdict = new Dict(confname);
+				var local_export_path = export_path + name + "/";
+
+                var confdict = new Dict();
+                var confname = confdict.name;
                 obj.message("dumptargetconfigdict", "cpp-export", "cpp-code-export", confname);
-                confdict.set("output_path", export_path);
+                confdict.set("output_path", local_export_path);
                 confdict.set("export_name", name);
                 confdict.set("minimal_export", 1);
                 confdict.set("classname", name);
@@ -78,84 +83,139 @@ function configure(doExport) {
                     confdict.set("fixedblocksize", Number(blocksize));
                 }
 
-				if (doExport) {
-					obj.message("export", "cpp-export", "cpp-code-export", confname);
+				configurations.push({
+					dict: confdict,
+					obj: obj
+				});
 
-					// this might not work on the first pass, since it can take a little time.
-					// dict.import_json(obj.getattr("exportfolder") + obj.getattr("exportname") + ".json")
-					
-					// var ast = JSON.parse(dict.stringify())
-					// if (ast.class == "Module") {
-					// 	var nodes = ast.block.children;
-					// 	for (var i=0; i<nodes.length; i++) {
-					// 		var node = nodes[i];
-					// 		if (node.typename == "Data") {
-					// 			//var bufname = obj.getattr(node.name)
-					// 			var bufname = obj.getattr(node.name)
-					// 			var buffer = new Buffer(bufname)
-					// 			var frames = buffer.framecount()
-					// 			var chans = buffer.channelcount()
-					// 			if (frames > 0 && chans > 0) {
-					// 				var wavname = node.name + ".wav"
-					// 				// write out that file so it can be referenced:
-					// 				buffer.send("write", obj.getattr("exportfolder") + wavname);
-					// 				//post("found buffer mapped Data", node.name, bufname, wavname, frames, chans)
-					// 			}
-					// 		} else if (node.typename == "Buffer") {
-					// 			// find the corresponding buffer~:
-					// 			var bufname = obj.getattr(node.name)
-					// 			var buffer = new Buffer(bufname)
-					// 			var frames = buffer.framecount()
-					// 			var chans = buffer.channelcount()
-
-					// 			if (frames < 0 || chans < 0) {
-					// 				error("oopsy: can't find buffer~ "+bufname);
-					// 				return;
-					// 			}
-
-					// 			// write it out:
-					// 			//buffer.send("write", obj.getattr("exportfolder") + bufname + ".wav");
-
-    				// 			post("oopsy: consider replacing [buffer "+node.name+"] with [data "+node.name+" "+frames+" "+chans+"]\n"); 
-					// 			if (node.name != bufname) { 
-					// 				post("and set @"+node.name, bufname, "on the gen~\n"); 
-					// 			}
-					// 			error("gen~ cannot export with [buffer] objects\n")
-					// 			errors = 1;
-					// 			return;
-					// 		}
-					// 	}
-					// }
-				}
+				// this might not work on the first pass, since it can take a little time.
+				// dict.import_json(obj.getattr("exportfolder") + obj.getattr("exportname") + ".json")
 				
-				// if (doExport) {
-				// 	obj.message("exportcode");
-				// }
-				names.push(name);
-				cpps.push(path + sep + name + ".h");
+				// var ast = JSON.parse(dict.stringify())
+				// if (ast.class == "Module") {
+				// 	var nodes = ast.block.children;
+				// 	for (var i=0; i<nodes.length; i++) {
+				// 		var node = nodes[i];
+				// 		if (node.typename == "Data") {
+				// 			//var bufname = obj.getattr(node.name)
+				// 			var bufname = obj.getattr(node.name)
+				// 			var buffer = new Buffer(bufname)
+				// 			var frames = buffer.framecount()
+				// 			var chans = buffer.channelcount()
+				// 			if (frames > 0 && chans > 0) {
+				// 				var wavname = node.name + ".wav"
+				// 				// write out that file so it can be referenced:
+				// 				buffer.send("write", obj.getattr("exportfolder") + wavname);
+				// 				//post("found buffer mapped Data", node.name, bufname, wavname, frames, chans)
+				// 			}
+				// 		} else if (node.typename == "Buffer") {
+				// 			// find the corresponding buffer~:
+				// 			var bufname = obj.getattr(node.name)
+				// 			var buffer = new Buffer(bufname)
+				// 			var frames = buffer.framecount()
+				// 			var chans = buffer.channelcount()
 
-                break;  // we only support one rnbo object for now
+				// 			if (frames < 0 || chans < 0) {
+				// 				error("oopsy: can't find buffer~ "+bufname);
+				// 				return;
+				// 			}
+
+				// 			// write it out:
+				// 			//buffer.send("write", obj.getattr("exportfolder") + bufname + ".wav");
+
+				// 			post("oopsy: consider replacing [buffer "+node.name+"] with [data "+node.name+" "+frames+" "+chans+"]\n"); 
+				// 			if (node.name != bufname) { 
+				// 				post("and set @"+node.name, bufname, "on the gen~\n"); 
+				// 			}
+				// 			error("gen~ cannot export with [buffer] objects\n")
+				// 			errors = 1;
+				// 			return;
+				// 		}
+				// 	}
+				// }
+				
+				names.push(name);
+				cpps.push(local_export_path + name + ".h");
 			}
 			obj = obj.nextobject;
 		}
 	}
-	find_gens(pat, names, cpps, export_path) 
+
+	findRnboObjects(pat, names, cpps, export_path);
 
 	if (errors) {
-		post("oopsy: aborting due to errors\n")
+		post("oopsy: aborting due to errors\n");
 		return;
 	} else if (names.length < 1) {
-		post("oopsy: didn't find any valid gen~ objects\n")
+		post("oopsy: didn't find any valid gen~ objects\n");
 		return;
 	} 
 
-	var name = names.join("_")
-	outlet(1, name)
-
+	var name = names.join("_");
 	var args = [target, samplerate, "block"+blocksize, "midi"+midi].concat(cpps);
 	if (boost) args.push("boost");
 	if (fastmath) args.push("fastmath");
-	outlet(0, args)
+
+	var activeConf = 0;
+	const timeout = 20;
+	var timeOutCount = timeout;
+	var tsk = new Task(
+		function doExport() {
+			post("executing export task \n");
+			post ("active: " + activeConf + " done: " + configurations[activeConf].done + "\n");
+			arguments.callee.task.interval = 1000;
+			var cancelTask = true;
+			if (configurations[activeConf].done === undefined) {
+				// active conf has not been triggered, yet
+				post("starting export " + activeConf + "\n");
+				configurations[activeConf].obj.message("export", "cpp-export", "cpp-code-export", configurations[activeConf].dict.name);
+				configurations[activeConf].done = false;
+				cancelTask = false;
+			}
+			else if (configurations[activeConf].done == false) {
+				// check if we already have an exported file
+				var outpath = configurations[activeConf].dict.get("output_path");
+				var fileName = configurations[activeConf].dict.get("export_name");
+				var exportFilePath = outpath + fileName + ".h";
+				post("checking export " + activeConf + " '" + exportFilePath + "'\n");
+
+				if (fileExists(exportFilePath)) {
+					configurations[activeConf].done = true;
+					post("finished export " + activeConf + "\n");
+					activeConf++;
+					timeOutCount = timeout;
+	
+					if (activeConf >= configurations.length) {
+						outlet(1, name)
+						outlet(0, args)		
+						cancelTask = true;
+					}
+					else {
+						cancelTask = false;
+					}
+				}
+				else {
+					cancelTask = false;
+				}
+			}
+	
+			if (--timeOutCount < 0) {
+				post("error: export did time out.\n")
+				cancelTask = true;
+			}
+			else if (activeConf > configurations.length) {
+				post("reached end of configurations.\n")
+				cancelTask = true;
+			}
+			
+			if (cancelTask) {
+				arguments.callee.task.cancel();
+			}
+		}, this
+	);
+
+	tsk.interval = 10;
+	tsk.repeat();
 }
 
 // convert names to use only characters safe for variable names
