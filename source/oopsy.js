@@ -318,6 +318,9 @@ function run() {
 
 	let defines = hardware.defines;
 
+	// switch off Midi until we adapted to the libDaisy 5.4 breaking UART changes
+	defines.OOPSY_TARGET_HAS_MIDI_INPUT = defines.OOPSY_TARGET_HAS_MIDI_OUTPUT = 0;
+
 	if (defines.OOPSY_TARGET_HAS_MIDI_INPUT || defines.OOPSY_TARGET_HAS_MIDI_OUTPUT) {
 		defines.OOPSY_TARGET_USES_MIDI_UART = 1
 	}
