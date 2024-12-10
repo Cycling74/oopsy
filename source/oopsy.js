@@ -38,7 +38,12 @@ const fs = require("fs"),
 	os = require("os"),
 	assert = require("assert");
 const {exec, execSync, spawn} = require("child_process");
-const { posixify_path, interpolate, asCppNumber, checkBuildEnvironment, help } = require("./oopsy.shared.js");
+const { posixify_path, interpolate, node_scale, asCppNumber, checkBuildEnvironment, help } = require("./oopsy.shared.js");
+
+const json2daisy = require(path.join(__dirname, "json2daisy.js"));
+const daisy_glue = require(path.join(__dirname, "daisy_glue.js"));
+
+const [ build_tools_path, has_dfu_util ] = checkBuildEnvironment();
 
 let watchers = []
 
@@ -60,8 +65,6 @@ function run() {
 	let samplerate = 48
 	let blocksize = 48
 	let options = {}
-
-	checkBuildEnvironment();
 
 	if (args.length == 0) {
 		console.log(help)

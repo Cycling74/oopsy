@@ -4,41 +4,14 @@
 		"appversion" : 		{
 			"major" : 9,
 			"minor" : 0,
-			"revision" : 0,
+			"revision" : 3,
 			"architecture" : "x64",
 			"modernui" : 1
 		}
 ,
 		"classnamespace" : "box",
 		"rect" : [ 200.0, 262.0, 664.0, 480.0 ],
-		"bglocked" : 0,
-		"openinpresentation" : 0,
-		"default_fontsize" : 12.0,
-		"default_fontface" : 0,
-		"default_fontname" : "Arial",
-		"gridonopen" : 1,
 		"gridsize" : [ 15.0, 15.0 ],
-		"gridsnaponopen" : 1,
-		"objectsnaponopen" : 1,
-		"statusbarvisible" : 2,
-		"toolbarvisible" : 1,
-		"lefttoolbarpinned" : 0,
-		"toptoolbarpinned" : 0,
-		"righttoolbarpinned" : 0,
-		"bottomtoolbarpinned" : 0,
-		"toolbars_unpinned_last_save" : 0,
-		"tallnewobj" : 0,
-		"boxanimatetime" : 200,
-		"enablehscroll" : 1,
-		"enablevscroll" : 1,
-		"devicewidth" : 0.0,
-		"description" : "",
-		"digest" : "",
-		"tags" : "",
-		"style" : "",
-		"subpatcher_template" : "",
-		"assistshowspatchername" : 0,
-		"cluebar" : 0,
 		"boxes" : [ 			{
 				"box" : 				{
 					"id" : "obj-7",
@@ -82,41 +55,15 @@
 						"appversion" : 						{
 							"major" : 9,
 							"minor" : 0,
-							"revision" : 0,
+							"revision" : 3,
 							"architecture" : "x64",
 							"modernui" : 1
 						}
 ,
 						"classnamespace" : "rnbo",
 						"rect" : [ 561.0, 257.0, 1003.0, 690.0 ],
-						"bglocked" : 0,
-						"openinpresentation" : 0,
-						"default_fontsize" : 12.0,
-						"default_fontface" : 0,
 						"default_fontname" : "Lato",
-						"gridonopen" : 1,
 						"gridsize" : [ 15.0, 15.0 ],
-						"gridsnaponopen" : 1,
-						"objectsnaponopen" : 1,
-						"statusbarvisible" : 2,
-						"toolbarvisible" : 1,
-						"lefttoolbarpinned" : 0,
-						"toptoolbarpinned" : 0,
-						"righttoolbarpinned" : 0,
-						"bottomtoolbarpinned" : 0,
-						"toolbars_unpinned_last_save" : 0,
-						"tallnewobj" : 0,
-						"boxanimatetime" : 200,
-						"enablehscroll" : 1,
-						"enablevscroll" : 1,
-						"devicewidth" : 0.0,
-						"description" : "",
-						"digest" : "",
-						"tags" : "",
-						"style" : "",
-						"subpatcher_template" : "",
-						"assistshowspatchername" : 0,
-						"cluebar" : 0,
 						"title" : "sine",
 						"boxes" : [ 							{
 								"box" : 								{
@@ -130,17 +77,17 @@
 									"rnbo_extra_attributes" : 									{
 										"tonormalized" : "",
 										"preset" : 1,
-										"enum" : "",
-										"steps" : 0.0,
-										"displayname" : "",
 										"ctlin" : 0.0,
+										"exponent" : 1.0,
+										"sendinit" : 1,
+										"enum" : "",
 										"unit" : "",
+										"displayname" : "",
 										"meta" : "",
 										"order" : "0",
-										"sendinit" : 1,
-										"fromnormalized" : "",
 										"displayorder" : "-",
-										"exponent" : 1.0
+										"steps" : 0.0,
+										"fromnormalized" : ""
 									}
 ,
 									"rnbo_serial" : 1,
@@ -836,21 +783,21 @@
 									"patching_rect" : [ 205.0, 81.0, 175.0, 23.0 ],
 									"rnbo_classname" : "param",
 									"rnbo_extra_attributes" : 									{
-										"minimum" : 0.0,
 										"tonormalized" : "",
 										"preset" : 1,
-										"enum" : "",
-										"steps" : 0.0,
-										"displayname" : "",
-										"ctlin" : 0.0,
-										"unit" : "",
-										"meta" : "",
 										"maximum" : 1.0,
-										"order" : "0",
+										"ctlin" : 0.0,
+										"exponent" : 1.0,
 										"sendinit" : 1,
-										"fromnormalized" : "",
+										"enum" : "",
+										"unit" : "",
+										"minimum" : 0.0,
+										"displayname" : "",
+										"meta" : "",
+										"order" : "0",
 										"displayorder" : "-",
-										"exponent" : 1.0
+										"steps" : 0.0,
+										"fromnormalized" : ""
 									}
 ,
 									"rnbo_serial" : 2,
@@ -1256,9 +1203,9 @@
 									"patching_rect" : [ 42.0, 144.0, 66.0, 23.0 ],
 									"rnbo_classname" : "cycle~",
 									"rnbo_extra_attributes" : 									{
-										"buffername" : "RNBODefaultSinus",
 										"index" : "freq",
-										"interp" : "linear"
+										"interp" : "linear",
+										"buffername" : "RNBODefaultSinus"
 									}
 ,
 									"rnbo_serial" : 1,
@@ -1512,7 +1459,7 @@
 
 							}
  ],
-						"originid" : "pat-6"
+						"originid" : "pat-8"
 					}
 ,
 					"patching_rect" : [ 53.0, 272.0, 99.0, 22.0 ],
@@ -1537,6 +1484,7 @@
 							"parameter_invisible" : 1,
 							"parameter_longname" : "rnbo~",
 							"parameter_modmode" : 0,
+							"parameter_osc_name" : "<default>",
 							"parameter_shortname" : "rnbo~",
 							"parameter_type" : 3
 						}
@@ -1648,7 +1596,7 @@
 
 			}
  ],
-		"originid" : "pat-4",
+		"originid" : "pat-6",
 		"parameters" : 		{
 			"obj-1::obj-32" : [ "live.text[2]", "FILTER", 0 ],
 			"obj-1::obj-33" : [ "live.text[1]", "FILTER", 0 ],
@@ -1695,15 +1643,7 @@
 				"implicit" : 1
 			}
  ],
-		"autosave" : 0,
-		"oscsendmode" : 0,
-		"oscsendudpaddr" : "127.0.0.1",
-		"oscsendudpport" : 30337,
-		"oscreceivemode" : 0,
-		"oscreceiveudpport" : 30338,
-		"oscqueryenable" : 0,
-		"oscprefixmode" : 0,
-		"oscprefix" : ""
+		"autosave" : 0
 	}
 
 }

@@ -3,9 +3,6 @@ const os = require("os");
 const { execSync } = require("child_process");
 const fs = require("fs");
 
-const json2daisy = require(path.join(__dirname, "json2daisy.js"));
-const daisy_glue = require(path.join(__dirname, "daisy_glue.js"));
-
 // returns the path `str` with posix path formatting:
 function posixify_path(str) {
 	return str.split(path.sep).join(path.posix.sep);
@@ -56,9 +53,10 @@ function node_scale(node) {
 		`
 }
 
-let build_tools_path;
-let has_dfu_util;
 function checkBuildEnvironment() {
+    let build_tools_path;
+    let has_dfu_util;
+
 	// check for available build tools:
 	if (os.platform == "win32") {
 		has_dfu_util = false;
@@ -92,6 +90,8 @@ function checkBuildEnvironment() {
 			console.warn(`oopsy can't find the dfu-util binary in ${build_tools_path}, will not be able to upload binary to the Daisy. Please check https://github.com/electro-smith/DaisyWiki/wiki/1e.-Getting-Started-With-Oopsy-(Gen~-Integration) for installation instructions.`)
 		}
 	}
+
+    return [ build_tools_path, has_dfu_util ];
 }
 
 const help = `
@@ -265,6 +265,8 @@ module.exports = {
 
     // returns str with any $<key> replaced by data[key]
     interpolate: interpolate,
+
+    node_scale: node_scale,
 
     // prints a number as a C-style float:
     asCppNumber: asCppNumber,

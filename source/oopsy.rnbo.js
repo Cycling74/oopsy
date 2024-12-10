@@ -41,6 +41,9 @@ const fs = require("fs"),
 const {exec, execSync, spawn} = require("child_process");
 const { posixify_path, interpolate, asCppNumber, checkBuildEnvironment, help } = require("./oopsy.shared.js");
 
+const json2daisy = require(path.join(__dirname, "json2daisy.js"));
+const daisy_glue = require(path.join(__dirname, "daisy_glue.js"));
+
 const [ build_tools_path, has_dfu_util ] = checkBuildEnvironment();
 
 let watchers = []
@@ -94,8 +97,6 @@ function run() {
 	let blocksize = 48
 	let midiuse = "none";
 	let options = {}
-
-	checkBuildEnvironment();
 	
 	if (args.length == 0) {
 		console.log(help)
@@ -425,10 +426,10 @@ TARGET = ${build_name}
 # App type
 APP_TYPE = ${hardware.app_type}
 # Sources -- note, won't work with paths with spaces
-CPP_SOURCES = ${posixify_path(path.relative(build_path, maincpp_path).replace(" ", "\\ "))}
-C_SOURCES = ../tlsf.c
+CPP_SOURCES = ${posixify_path(path.relative(build_path, maincpp_path).replace(" ", "\\ "))} \\
 ${posixify_path(path.relative(build_path, path.join(__dirname, "petal_sm", "daisy_petal_125b_sm.cpp")))}
 ${includes.length > 0 ? `C_INCLUDES = ${includes.join('\\\n')}` : ``}
+C_SOURCES = ../tlsf.c
 # Library Locations
 LIBDAISY_DIR = ${(posixify_path(path.relative(build_path, path.join(__dirname, "libdaisy"))).replace(" ", "\\ "))}
 APP_TYPE = BOOT_SRAM
@@ -440,7 +441,7 @@ OPT = -O3
 SYSTEM_FILES_DIR = $(LIBDAISY_DIR)/core
 include $(SYSTEM_FILES_DIR)/Makefile
 # Include the rnbo lib
-CFLAGS+=-I"${posixify_path(path.relative(build_path, rnboLibPath))}"
+CFLAGS+=-I"${posixify_path(path.relative(build_path, rnboLibPath))}" \\
 -I${posixify_path(path.relative(build_path, path.join(__dirname, "petal_sm")))}
 # Silence irritating warnings:
 CFLAGS+=-O3 -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable
@@ -1009,12 +1010,8 @@ struct App_${name} : public oopsy::App<App_${name}> {
 
 		// if you do not want this to allocate (and a slightly better performance) consider exporting your code
 		// with a fixed audio vector size matching the one you are using (vectorsize)
-		#ifdef OOPSY_TARGET_PATCH_SM
-		rnbo->prepareToProcess(daisy.hardware.AudioSampleRate(), daisy.hardware.AudioBlockSize(), true);
-		#else
-		rnbo->prepareToProcess(daisy.hardware.seed.AudioSampleRate(), daisy.hardware.seed.AudioBlockSize(), true);
-		#endif
-		
+		rnbo->prepareToProcess(daisy.hardware.${som_or_seed}.AudioSampleRate(), daisy.hardware.${som_or_seed}.AudioBlockSize(), true);
+
 		daisy.param_count = ${rnbo.params.length};
 		${(defines.OOPSY_HAS_PARAM_VIEW) ? `daisy.param_selected = ${Math.max(0, rnbo.params.map(name=>nodes[name].src).indexOf(undefined))};`:``}
 		${rnbo.params.map(name=>nodes[name])
@@ -1085,8 +1082,8 @@ struct App_${name} : public oopsy::App<App_${name}> {
 		memcpy(${node.name}, ${node.src}, sizeof(float)*size);` : `
 		memset(${node.name}, 0, sizeof(float)*size);`).join("")}
 		${app.inserts.concat(hardware.inserts).filter(o => o.where == "post_audio").map(o => o.code).join("\n\t")}
-		${hardware.defines.OOPSY_TARGET_SEED ? "hardware.PostProcess();" : ""}
-	}	
+		${hardware.som == 'seed' || hardware.som == 'petal_125b_sm' ? "hardware.PostProcess();" : ""}
+	}
 
 	void mainloopCallback(oopsy::RNBODaisy& daisy, uint32_t t, uint32_t dt) {
 		Daisy& hardware = daisy.hardware;
