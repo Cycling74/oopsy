@@ -64,6 +64,7 @@ function run() {
 	let cpps = []
 	let samplerate = 48
 	let blocksize = 48
+	let midiuse = "none";
 	let options = {}
 
 	if (args.length == 0) {
@@ -114,6 +115,10 @@ function run() {
 			case "nooled":
 			case "boost":
 			case "fastmath": options[arg] = true; break;
+
+			case "midinone":
+			case "midiusb":
+			case "midiuart": midiuse = arg.match(/midi(.+)/)[1]; break;
 
 			default: {
 				// assume anything else is a file path:
@@ -314,23 +319,29 @@ function run() {
 		target: target,
 		hardware: hardware,
 		apps: apps,
+		midiuse: midiuse
 	}
 
 	let defines = hardware.defines;
 
-	// switch off Midi until we adapted to the libDaisy 5.4 breaking UART changes
-	defines.OOPSY_TARGET_HAS_MIDI_INPUT = defines.OOPSY_TARGET_HAS_MIDI_OUTPUT = 0;
-
 	if (defines.OOPSY_TARGET_HAS_MIDI_INPUT || defines.OOPSY_TARGET_HAS_MIDI_OUTPUT) {
-		defines.OOPSY_TARGET_USES_MIDI_UART = 1
+		if (midiuse == "usb") {
+			defines.OOPSY_TARGET_USES_MIDI_USB = 1
+		}
+		else if (midiuse == "uart") {
+			defines.OOPSY_TARGET_USES_MIDI_UART = 1
+		}
 	}
 
 	if (apps.length > 1) {
 		defines.OOPSY_MULTI_APP = 1
 		// generate midi-handling code for any multi-app on a midi-enabled platform
 		// so that program-change messages for apps will work:
-		if (hardware.defines.OOPSY_TARGET_HAS_MIDI_INPUT) {
-			hardware.defines.OOPSY_TARGET_USES_MIDI_UART = 1
+		if (midiuse == "usb") {
+			defines.OOPSY_TARGET_USES_MIDI_USB = 1
+		}
+		else if (midiuse == "uart") {
+			defines.OOPSY_TARGET_USES_MIDI_UART = 1
 		}
 	}
 	if (options.nooled && defines.OOPSY_TARGET_HAS_OLED) {
@@ -490,9 +501,18 @@ int main(void) {
 							return;
 						}
 					} else if (stderr) {
-						console.log("oopsy dfu error")
-						console.log(stderr);
-						return;
+						// ignore these, it is a well known DFU export error
+						stderr = stderr.replace("dfu-util: Warning: Invalid DFU suffix signature\n", "");
+						stderr = stderr.replace("dfu-util: A valid DFU suffix will be required in a future dfu-util release\n", "");
+						
+						if (stderr.length) {
+							console.log("oopsy dfu error")
+							console.log(stderr);
+							return;	
+						}
+						else {
+							console.log("oopsy flashed")
+						}
 					}
 				});
 			}
@@ -1194,7 +1214,12 @@ function generate_app(app, hardware, target, config) {
 	})
 
 	if ((app.has_midi_in && hardware.defines.OOPSY_TARGET_HAS_MIDI_INPUT) || (app.has_midi_out && hardware.defines.OOPSY_TARGET_HAS_MIDI_OUTPUT)) {
-		defines.OOPSY_TARGET_USES_MIDI_UART = 1
+		if (config.midiuse == "usb") {
+			defines.OOPSY_TARGET_USES_MIDI_USB = 1
+		}
+		else if (config.midiuse == "uart") {
+			defines.OOPSY_TARGET_USES_MIDI_UART = 1
+		}	
 	}
 
 	// fill all my holes
@@ -1359,8 +1384,6 @@ struct App_${name} : public oopsy::App<App_${name}> {
 				.map(note=>`
 			${note.cname}.update_pressure(daisy, ((uint8_t)gen.${note.press.cname}) & 0x7F);`).join("")}
 		}` : ''}
-		${app.has_midi_out ? daisy.midi_outs.map(name=>nodes[name].from.map(name=>`
-		daisy.midi_postperform(${name}, size);`).join("")).join("") : ''}
 		${daisy.audio_outs.map(name=>nodes[name])
 			.filter(node => node.src != node.name)
 			.map(node=>node.src ? `
@@ -1384,9 +1407,9 @@ struct App_${name} : public oopsy::App<App_${name}> {
 			.filter(node => node.config.where == "main")
 			.map(node=>`
 		${interpolate(node.config.code, node)}`).join("")}
-		${defines.OOPSY_TARGET_USES_MIDI_UART ? `
-		while(daisy.uart.Readable()) {
-			uint8_t byte = daisy.uart.PopRx();
+		${defines.OOPSY_TARGET_USES_MIDI_UART || defines.OOPSY_TARGET_USES_MIDI_USB ? `
+		while(daisy.midihandler.hasData()) {
+			uint8_t byte = daisy.midihandler.popData();
 			if (byte >= 128) { // status byte
 				${gen.params
 				.map(name=>nodes[name])

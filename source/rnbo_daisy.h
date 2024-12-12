@@ -901,10 +901,6 @@ namespace oopsy
 			return *this;
 		}
 
-#if OOPSY_TARGET_USES_MIDI_UART
-
-#endif // OOPSY_TARGET_USES_MIDI_UART
-
 		// TODO -- need better way to handle this to avoid hardcoding
 		#if (OOPSY_TARGET_FIELD)
 		void setFieldLedsFromData(Data& data) {
