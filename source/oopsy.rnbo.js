@@ -1034,6 +1034,7 @@ struct App_${name} : public oopsy::App<App_${name}> {
 
 	void audioCallback(oopsy::RNBODaisy& daisy, daisy::AudioHandle::InputBuffer hardware_ins, daisy::AudioHandle::OutputBuffer hardware_outs, size_t size) {
 		Daisy& hardware = daisy.hardware;
+		${hardware.som == 'seed' ? "hardware.ProcessAllControls();" : ""}
 		${app.inserts.concat(hardware.inserts).filter(o => o.where == "audio").map(o => o.code).join("\n\t")}
 		${daisy.device_inputs.map(name => nodes[name])
 			.filter(node => node.to.length)
