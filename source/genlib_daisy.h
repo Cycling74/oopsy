@@ -55,7 +55,14 @@ static bool      update = false;
 #define OOPSY_SUPER_LONG_PRESS_MS (20000)
 #define OOPSY_DISPLAY_PERIOD_MS 10
 #define OOPSY_SCOPE_MAX_ZOOM (8)
+
+// when using USB Midi we have to take the place that the USB MidiHandler needs to
+// operate into account
+#ifdef OOPSY_TARGET_USES_MIDI_USB
+static const uint32_t OOPSY_SRAM_SIZE = 448 * 1024;
+#else
 static const uint32_t OOPSY_SRAM_SIZE = 512 * 1024;
+#endif // OOPSY_TARGET_USES_MIDI_USB
 static const uint32_t OOPSY_SDRAM_SIZE = 64 * 1024 * 1024;
 
 // Added dedicated global SDFile to replace old global from libDaisy
