@@ -6,6 +6,8 @@ Exporting Max Gen or RNBO patchers for the ElectroSmith Daisy hardware platforms
 
 Each Daisy binary can hold several gen~ patcher "apps", which can be switched between using the encoder (or switches on the DaisyField), for RNBO we currently only support one patcher per binary
 
+Be aware that for RNBO you need to use the 64 MB version of the Daisy Seed (the 1 MB version is not supported).
+
 ## How gen~ and RNBO features map to Daisy
 
 Mostly this works by adding an appropriate name to the `in`, `out`, and `param` objects, but many features will also auto-map without special naming.
@@ -48,6 +50,20 @@ Drop a new `oopsy.patch` / `oopsy.field` etc. as desired object into a Max patch
 *Note:*  to be used for RNBO you need to flash the bootloader to your Daisy device first, the easiest way would be using the [Daisy Web Programmer](https://electro-smith.github.io/Programmer/) (look for the `Advanced` Button in the `Programming` section).
 
 After you flashed the bootloader, you will have to set it into receiving mode each time before you export. This is done by shortly pressing and releaseing the `Reset` button and then shortly pressing and releaseing the `Boot` button (one LED will then start to flash slowly in a kind of 'breathing' fashion). 
+
+*Note:*  If you are in verbose mode you might see these errors:
+
+    oopsy-verbose: "File downloaded successfully"
+    oopsy-verbose: "Transitioning to dfuMANIFEST state"
+    oopsy-verbose:
+    oopsy-verbose: "stderr Warning: Invalid DFU suffix signature"
+    oopsy-verbose: "A valid DFU suffix will be required in a future dfu-util release!!!"
+    oopsy-verbose:
+    oopsy-verbose: "oopsy dfu error"
+    oopsy-verbose: "Warning: Invalid DFU suffix signature"
+    oopsy-verbose: "A valid DFU suffix will be required in a future dfu-util release!!!”
+
+no worries, this is a quirk in the current libdaisy, as long as you see *File downloaded successfully* you are fine.
 
 ### Multi-App
 
@@ -98,4 +114,4 @@ For details of the licensing terms of code exported from gen~ see https://suppor
 -----
 
 Oopsy was authored by [Graham](https://github.com/grrrwaaa) [Wakefield](http://alicelab.world) in 2020-2021.
-and adapted to RNBO by [Stefan Brunner](https://ww.klingt.org) in 2024
+and adapted to RNBO by [Stefan Brunner](https://www.klingt.org) in 2024
