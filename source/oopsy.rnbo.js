@@ -358,7 +358,7 @@ function run() {
 	var rnboLibPath = path.join(build_path, "common");
 	if (apps.length) {
 		fs.rmSync(rnboLibPath, { force: true, recursive: true });
-		fs.renameSync(rnboLibSrcPath, rnboLibPath);
+		fs.cpSync(rnboLibSrcPath, rnboLibPath, { recursive: true });
 	}
 
 	let config = {
@@ -483,9 +483,20 @@ CPPFLAGS+=-O3 -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-var
 	
 	// add watcher
 	if (watch && watchers.length < 1) {
-		watchers = cpps.map(cpp_path => fs.watch(cpp_path, (event, filepath)=>{
-			run(...args);
-		}))
+		// Debounce: rnbo~ writes the .cpp first, then copies headers into common/ one by one.
+		// Watch both the .cpp files AND the common/ directory so the debounce resets on every
+		// file write; the build only starts 500ms after the last file is written.
+		let watchTimeout = null;
+		const triggerRebuild = () => {
+			if (watchTimeout) clearTimeout(watchTimeout);
+			watchTimeout = setTimeout(() => run(...args), 500);
+		};
+		watchers = cpps.map(cpp_path => fs.watch(cpp_path, triggerRebuild));
+		try {
+			watchers.push(fs.watch(rnboLibSrcPath, { recursive: true }, triggerRebuild));
+		} catch(e) {
+			// rnboLibSrcPath may not exist yet on the very first run
+		}
 	}
 
 	apps.map(app => {
