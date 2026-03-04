@@ -420,6 +420,32 @@ function run() {
 	const includes = hardware.includes.map(
 		item => `-I"${posixify_path(path.relative(build_path, item))}"`);
 
+	// Patch the SRAM linker script to add .axisram_bss section for SDMMC DMA objects.
+	// The original places .bss in DTCMRAM (unreachable by SDMMC1 IDMA); our section
+	// forces FIL/FatFSInterface into AXI SRAM (0x24000000). Written to the build dir
+	// so source/libdaisy is never modified.
+	const srcLdsPath = path.join(__dirname, "libdaisy/core/STM32H750IB_sram.lds");
+	const patchedLdsPath = path.join(build_path, "oopsy_sram.lds");
+	try {
+		let ldsContent = fs.readFileSync(srcLdsPath, "utf-8");
+		ldsContent += `
+/* Added by oopsy */
+SECTIONS
+{
+\t.axisram_bss (NOLOAD) :
+\t{
+\t\t. = ALIGN(4);
+\t\t*(.axisram_bss)
+\t\t*(.axisram_bss*)
+\t\t. = ALIGN(4);
+\t} > SRAM
+}
+`;
+		fs.writeFileSync(patchedLdsPath, ldsContent);
+	} catch(e) {
+		console.warn("oopsy: could not patch SRAM linker script:", e.message);
+	}
+
 		fs.writeFileSync(makefile_path, `
 # Project Name
 TARGET = ${build_name}
@@ -435,6 +461,7 @@ LIBDAISY_DIR = ${(posixify_path(path.relative(build_path, path.join(__dirname, "
 APP_TYPE = BOOT_SRAM
 
 ${hardware.defines.OOPSY_TARGET_USES_SDMMC ? `USE_FATFS = 1`:``}
+LDSCRIPT = oopsy_sram.lds
 # Optimize (i.e. CFLAGS += -O3):
 OPT = -O3
 # Core location, and generic Makefile.
@@ -498,6 +525,7 @@ ${hardware.inserts.filter(o => o.where == "header").map(o => o.code).join("\n")}
 #define RNBO_NOSTL
 #define RNBO_FIXEDLISTSIZE 64
 #define RNBO_USECUSTOMALLOCATOR
+#define RNBO_USECUSTOMPLATFORMPRINT
 #define RNBO_NO_PATCHERFACTORY
 
 #include "../rnbo_daisy.h"
@@ -668,10 +696,21 @@ function analyze_json(jsonstr, hardware, desc_path)
 				min: param.minimum,
 				max: param.maximum
 			};
-	
-			rnbo.params.push(paramdesc);	
+
+			rnbo.params.push(paramdesc);
 		}
 	});
+
+	rnbo.datas = (desc.externalDataRefs || [])
+		.map((ref, i) => ({
+			index: i,
+			name: ref.id || `buf${i}`,
+			file: ref.file && ref.file.length > 0 ? path.basename(ref.file) : null
+		}))
+		.filter(d => d.file);
+	if (rnbo.datas.length > 0) {
+		hardware.defines.OOPSY_TARGET_USES_SDMMC = 1;
+	}
 
 	return rnbo;
 }
@@ -909,32 +948,38 @@ function generate_app(app, hardware, target, config) {
 		return varname;
 	})
 
-	rnbo.datas = app.patch.datas.map((param, i)=>{
-		const varname = "gen_data_"+param.name;
-		let src, label;
-		// search for a matching [out] name / prefix:
-		Object.keys(hardware.labels.datas).sort().forEach(k => {
-			let match
-			if (match = new RegExp(`^${k}_?(.+)?`).exec(param.name)) {
-				src = hardware.labels.datas[k];
-				label = match[1] || param.name
+	// Start with the datas from analyze_json() (externalDataRefs objects with {index, name, file})
+	rnbo.datas = app.patch.datas;
+	// Only remap if this is gen~-style data (no file property from externalDataRefs)
+	if (!app.patch.datas.some(d => d.file)) {
+		rnbo.datas = app.patch.datas.map((param, i)=>{
+			const varname = "gen_data_"+param.name;
+			let src, label;
+			// search for a matching [out] name / prefix:
+			Object.keys(hardware.labels.datas).sort().forEach(k => {
+				let match
+				if (match = new RegExp(`^${k}_?(.+)?`).exec(param.name)) {
+					src = hardware.labels.datas[k];
+					label = match[1] || param.name
+				}
+			})
+
+			let node = Object.assign({
+				varname: varname,
+				label: param.name,
+			}, param);
+			nodes[varname] = node;
+
+			if (src) {
+				nodes[src].data = "rnbo." + param.cname;
+				//nodes[src].to.push(varname)
+				//nodes[src].from.push(src);
 			}
+
+			return varname;
 		})
-
-		let node = Object.assign({
-			varname: varname,
-			label: param.name,
-		}, param);
-		nodes[varname] = node;
-
-		if (src) {
-			nodes[src].data = "rnbo." + param.cname;
-			//nodes[src].to.push(varname)
-			//nodes[src].from.push(src);
-		}
-
-		return varname;
-	})
+	}
+	// else: rnbo.datas already correctly populated by analyze_json() from externalDataRefs
 
 	if ((app.has_midi_in && hardware.defines.OOPSY_TARGET_HAS_MIDI_INPUT) || (app.has_midi_out && hardware.defines.OOPSY_TARGET_HAS_MIDI_OUTPUT)) {
 		if (config.midiuse == "usb") {
@@ -1026,10 +1071,9 @@ struct App_${name} : public oopsy::App<App_${name}> {
 			.filter(node => node.data)
 			.map(node =>`
 		${interpolate(node.init, node)};`).join("")}
-		${rnbo.datas.map(name=>nodes[name])
-			.filter(node => node.wavname)
-			.map(node=>`
-		daisy.sdcard_load_wav("${node.wavname}", rnbo.${node.cname});`).join("")}
+		${rnbo.datas
+			.map(d=>`
+		daisy.sdcard_load_wav_rnbo("${d.file}", rnbo, ${d.index});`).join("")}
 	}
 
 	void audioCallback(oopsy::RNBODaisy& daisy, daisy::AudioHandle::InputBuffer hardware_ins, daisy::AudioHandle::OutputBuffer hardware_outs, size_t size) {

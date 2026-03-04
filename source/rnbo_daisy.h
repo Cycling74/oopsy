@@ -49,6 +49,15 @@ tlsf_t rnboPool;
 
 char DSY_SDRAM_BSS sdram_pool[OOPSY_SDRAM_SIZE];
 
+#ifdef OOPSY_TARGET_USES_SDMMC
+// These objects contain 512-byte sector buffers that the SDMMC1 IDMA writes to directly.
+// With APP_TYPE=BOOT_SRAM the default .bss section lands in DTCMRAM, which the SDMMC1 IDMA
+// cannot access, causing FR_DISK_ERR (1). The .axisram_bss section places them in AXI SRAM
+// (0x24000000) which is the only memory the SDMMC1 IDMA can reach.
+__attribute__((section(".axisram_bss"))) FIL SDFile;
+__attribute__((section(".axisram_bss"))) daisy::FatFSInterface fsi;
+#endif
+
 namespace RNBO
 {
 	namespace Platform
@@ -74,6 +83,16 @@ namespace RNBO
 			auto mem = malloc(count * size);
 			memset(mem, 0, count * size);
 			return mem;
+		}
+
+		static void printMessage(const char *message)
+		{
+			daisy::Logger<daisy::LOGGER_INTERNAL>::PrintLine("%s", message);
+		}
+
+		static void printErrorMessage(const char *message)
+		{
+			printMessage(message);
 		}
 	}
 }
@@ -216,110 +235,138 @@ namespace oopsy
 		#define OOPSY_WAV_WORKSPACE_BYTES (256)
 
 		daisy::SdmmcHandler handler;
-		daisy::FatFSInterface fsi;
+		// fsi is a file-scope global (see .axisram_bss section above namespace oopsy)
 
 		uint8_t workspace[OOPSY_WAV_WORKSPACE_BYTES];
 
 		void sdcard_init() {
+			daisy::System::Delay(100); // allow SD card power-up time
 			daisy::SdmmcHandler::Config sdconfig;
-			sdconfig.Defaults(); // 4-bit, 50MHz
-			// sdconfig.clock_powersave = false;
-			// sdconfig.speed           = daisy::SdmmcHandler::Speed::FAST;
-			sdconfig.width           = daisy::SdmmcHandler::BusWidth::BITS_1;
+			sdconfig.Defaults();
+			sdconfig.speed = daisy::SdmmcHandler::Speed::STANDARD; // 25MHz
+			sdconfig.width = daisy::SdmmcHandler::BusWidth::BITS_1;
 			handler.Init(sdconfig);
 			fsi.Init(daisy::FatFSInterface::Config::MEDIA_SD);
-			f_mount(&fsi.GetSDFileSystem(), fsi.GetSDPath(), 1);
+			FRESULT mountres = f_mount(&fsi.GetSDFileSystem(), fsi.GetSDPath(), 1);
+			log("sd mount %d path %s", (int)mountres, fsi.GetSDPath());
 		}
 
-		// TODO: resizing without wasting memory
-		int sdcard_load_wav(const char * filename, Data& gendata) {
-			float * buffer = gendata.mData;
-			size_t buffer_frames = gendata.dim;
-			size_t buffer_channels = gendata.channels;
+		template<typename PatcherType>
+		int sdcard_load_wav_rnbo(const char *filename, PatcherType* patcher, int dataref_idx)
+		{
+			RNBO::DataRef* ref = patcher->getDataRef(dataref_idx);
+			if (!ref || ref->isInternal()) return -1;
+
+			// ---- WAV header parsing ----
 			size_t bytesread = 0;
 			WavFormatChunk format;
 			uint32_t header[3];
-			uint32_t marker, frames, chunksize, frames_per_read, frames_to_read, frames_read, total_frames_to_read;
-			uint32_t buffer_index = 0;
+			uint32_t marker, chunksize;
 			size_t bytespersample;
-			if(f_open(&SDFile, filename, (FA_OPEN_EXISTING | FA_READ)) != FR_OK) {
-				log("no %s", filename);
+
+			FRESULT fres = f_open(&SDFile, filename, (FA_OPEN_EXISTING | FA_READ));
+			if (fres != FR_OK)
+			{
+				log("no %s err %d", filename, (int)fres);
 				return -1;
 			}
-			if (f_eof(&SDFile) 
-				|| f_read(&SDFile, (void *)&header, sizeof(header), &bytesread) != FR_OK
-				|| header[0] != daisy::kWavFileChunkId 
-				|| header[2] != daisy::kWavFileWaveId) goto badwav;
+			if (f_eof(&SDFile) || f_read(&SDFile, (void *)&header, sizeof(header), &bytesread) != FR_OK || header[0] != daisy::kWavFileChunkId || header[2] != daisy::kWavFileWaveId)
+				goto badwav_rnbo;
 			// find the format chunk:
-			do {
-				if (f_eof(&SDFile) || f_read(&SDFile, (void *)&marker, sizeof(marker), &bytesread) != FR_OK) break;
+			do
+			{
+				if (f_eof(&SDFile) || f_read(&SDFile, (void *)&marker, sizeof(marker), &bytesread) != FR_OK)
+					break;
 			} while (marker != daisy::kWavFileSubChunk1Id);
-			if (f_eof(&SDFile) 
-				|| f_read(&SDFile, (void *)&format, sizeof(format), &bytesread) != FR_OK
-				|| format.chans == 0 
-				|| format.samplerate == 0 
-				|| format.bitspersample == 0) goto badwav;
+			if (f_eof(&SDFile) || f_read(&SDFile, (void *)&format, sizeof(format), &bytesread) != FR_OK || format.chans == 0 || format.samplerate == 0 || format.bitspersample == 0)
+				goto badwav_rnbo;
+			// Skip any extra bytes in the fmt chunk beyond the 16 we read.
+			// Many DAWs write size=18 (adding cbSize=0). Without this skip the
+			// data-chunk search starts mid-chunk and never finds "data".
+			if (format.size > 16)
+				f_lseek(&SDFile, f_tell(&SDFile) + (format.size - 16));
 			// find the data chunk:
-			do {
-				if (f_eof(&SDFile) || f_read(&SDFile, (void *)&marker, sizeof(marker), &bytesread) != FR_OK) break;
+			do
+			{
+				if (f_eof(&SDFile) || f_read(&SDFile, (void *)&marker, sizeof(marker), &bytesread) != FR_OK)
+					break;
 			} while (marker != daisy::kWavFileSubChunk2Id);
 			bytespersample = format.bytesperframe / format.chans;
-			if (f_eof(&SDFile) 
-				|| f_read(&SDFile, (void *)&chunksize, sizeof(chunksize), &bytesread) != FR_OK
-				|| format.format != 1 
-				|| bytespersample < 2 
-				|| bytespersample > 4) goto badwav; // only 16/24/32-bit PCM, sorry
-			// make sure we read in (multiples of) whole frames
-			frames = chunksize / format.bytesperframe;
-			frames_per_read = OOPSY_WAV_WORKSPACE_BYTES / format.bytesperframe;
-			frames_to_read = frames_per_read;
-			total_frames_to_read = buffer_frames;
-			// log("b=%u c=%u t=%u", buffer_frames, buffer_channels, total_frames_to_read);
-			// log("f=%u c=%u p=%u", frames, format.chans, frames_per_read);
-			// log("bp=%u c=%u p=%u", frames_to_read * format.bytesperframe);
-			do {
-				if (frames_to_read > total_frames_to_read) frames_to_read = total_frames_to_read;
-				f_read(&SDFile, workspace, frames_to_read * format.bytesperframe, &bytesread);
-				frames_read = bytesread / format.bytesperframe;
-				//log("_r=%u t=%u", frames_read, frames_to_read);
-				switch (bytespersample) {
-					case 2:  { // 16 bit
-						for (size_t f=0; f<frames_read; f++) {
-							for (size_t c=0; c<buffer_channels; c++) {
-								uint8_t * frame = workspace + f*format.bytesperframe + (c % format.chans)*bytespersample;
-								buffer[(buffer_index+f)*buffer_channels + c] = ((int16_t *)frame)[0] * 0.000030517578125f;
-							}
-						}
-					} break;
-					case 3: { // 24 bit
-						for (size_t f=0; f<frames_read; f++) {
-							for (size_t c=0; c<buffer_channels; c++) {
-								uint8_t * frame = workspace + f*format.bytesperframe + (c % format.chans)*bytespersample;
-								int32_t b = (int32_t)(
-									((uint32_t)(frame[0]) <<  8) | 
-									((uint32_t)(frame[1]) << 16) | 
-									((uint32_t)(frame[2]) << 24)
-								) >> 8;
-								buffer[(buffer_index+f)*buffer_channels + c] = (float)(((double)b) * 0.00000011920928955078125);
-							}
-						}
-					} break;
-					case 4: { // 32 bit
-						for (size_t f=0; f<frames_read; f++) {
-							for (size_t c=0; c<buffer_channels; c++) {
-								uint8_t * frame = workspace + f*format.bytesperframe + (c % format.chans)*bytespersample;
-								buffer[(buffer_index+f)*buffer_channels + c] = ((int32_t *)frame)[0] / 2147483648.f;
-							}
-						}
-					} break;
+			if (f_eof(&SDFile) || f_read(&SDFile, (void *)&chunksize, sizeof(chunksize), &bytesread) != FR_OK || format.format != 1 || bytespersample < 2 || bytespersample > 4)
+				goto badwav_rnbo; // only 16/24/32-bit PCM
+			{
+				// ---- Allocate SDRAM for decoded float samples ----
+				// buffer~ may have no declared size, so ref->getData() may be null.
+				// RNBO::Platform::malloc routes through the TLSF SDRAM pool (rnbo_daisy.h).
+				uint32_t frames         = chunksize / format.bytesperframe;
+				size_t buffer_channels  = format.chans;
+				size_t alloc_size       = frames * buffer_channels * sizeof(float);
+				float *buffer           = (float *)RNBO::Platform::malloc(alloc_size);
+				if (!buffer)
+				{
+					log("oom %s", filename);
+					f_close(&SDFile);
+					return -1;
 				}
-				total_frames_to_read -= frames_read;
-				buffer_index += frames_read;
-			} while (!f_eof(&SDFile) && bytesread > 0 && total_frames_to_read > 0);
-			f_close(&SDFile);
-			log("read %s", filename);
-			return buffer_index;
-		badwav:
+
+				// ---- Load WAV samples in chunks ----
+				uint32_t frames_per_read      = OOPSY_WAV_WORKSPACE_BYTES / format.bytesperframe;
+				uint32_t frames_to_read       = frames_per_read;
+				uint32_t total_frames_to_read = frames;
+				uint32_t buffer_index         = 0;
+				size_t   frames_read;
+				do
+				{
+					if (frames_to_read > total_frames_to_read)
+						frames_to_read = total_frames_to_read;
+					f_read(&SDFile, workspace, frames_to_read * format.bytesperframe, &bytesread);
+					frames_read = bytesread / format.bytesperframe;
+					switch (bytespersample)
+					{
+					case 2: // 16 bit
+						for (size_t f = 0; f < frames_read; f++)
+							for (size_t c = 0; c < buffer_channels; c++)
+							{
+								uint8_t *frame = workspace + f * format.bytesperframe + (c % format.chans) * bytespersample;
+								buffer[(buffer_index + f) * buffer_channels + c] = ((int16_t *)frame)[0] * 0.000030517578125f;
+							}
+						break;
+					case 3: // 24 bit
+						for (size_t f = 0; f < frames_read; f++)
+							for (size_t c = 0; c < buffer_channels; c++)
+							{
+								uint8_t *frame = workspace + f * format.bytesperframe + (c % format.chans) * bytespersample;
+								int32_t b = (int32_t)(((uint32_t)(frame[0]) << 8) |
+													  ((uint32_t)(frame[1]) << 16) |
+													  ((uint32_t)(frame[2]) << 24)) >> 8;
+								buffer[(buffer_index + f) * buffer_channels + c] = (float)(((double)b) * 0.00000011920928955078125);
+							}
+						break;
+					case 4: // 32 bit
+						for (size_t f = 0; f < frames_read; f++)
+							for (size_t c = 0; c < buffer_channels; c++)
+							{
+								uint8_t *frame = workspace + f * format.bytesperframe + (c % format.chans) * bytespersample;
+								buffer[(buffer_index + f) * buffer_channels + c] = ((int32_t *)frame)[0] / 2147483648.f;
+							}
+						break;
+					}
+					total_frames_to_read -= frames_read;
+					buffer_index         += frames_read;
+				} while (!f_eof(&SDFile) && bytesread > 0 && total_frames_to_read > 0);
+
+				f_close(&SDFile);
+				log("read %s", filename);
+
+				// ---- Hand buffer to RNBO ----
+				// deAlloc=true: RNBO takes ownership; freed by ~DataRef() on teardown or by the
+				// next setData() call. This is the official pattern (see deserializeBuffer in RNBO_DataRef.h).
+				ref->setData((char *)buffer, alloc_size, true);
+				ref->setType(RNBO::Float32AudioBuffer(buffer_channels, format.samplerate));
+				patcher->processDataViewUpdate(dataref_idx, RNBO::RNBOTimeNow);
+				return (int)buffer_index;
+			}
+		badwav_rnbo:
 			f_close(&SDFile);
 			log("bad %s", filename);
 			return -1;
@@ -890,14 +937,24 @@ namespace oopsy
 		}
 		#endif // OOPSY_TARGET_HAS_OLED
 
-		RNBODaisy &log(const char *fmt, ...) {
-			#ifdef OOPSY_TARGET_HAS_OLED
+		RNBODaisy &log(const char *fmt, ...)
+		{
+#ifdef OOPSY_TARGET_HAS_OLED
 			va_list argptr;
 			va_start(argptr, fmt);
 			vsnprintf(console_lines[console_line], console_cols, fmt, argptr);
 			va_end(argptr);
 			console_line = (console_line + 1) % console_rows;
-			#endif
+#else
+#ifdef OOPSY_USE_LOGGING
+			char log_buf[128];
+			va_list argptr;
+			va_start(argptr, fmt);
+			vsnprintf(log_buf, sizeof(log_buf), fmt, argptr);
+			va_end(argptr);
+			som->PrintLine("%s", log_buf);
+#endif
+#endif
 			return *this;
 		}
 
@@ -989,6 +1046,7 @@ namespace oopsy
 		: RNBO::MinimalEngine<>(patcher)
 		{}
 
+#if defined(OOPSY_TARGET_USES_MIDI_UART) || defined(OOPSY_TARGET_USES_MIDI_USB)
 		void sendMidiEvent(int port, int b1, int b2, int b3, RNBO::MillisecondTime time = 0.0) override {
 			uint8_t bytes[3];
 			bytes[0] = (uint8_t)b1;
@@ -1006,6 +1064,7 @@ namespace oopsy
 			}
 			daisy.midihandler.SendMessage(bytes, listlength);
 		}
+#endif
 	};
 
 };
