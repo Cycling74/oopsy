@@ -1,8 +1,9 @@
-#ifndef GENLIB_DAISY_H
-#define GENLIB_DAISY_H
+#ifndef RNBO_DAISY_H
+#define RNBO_DAISY_H
 
 /*
-Oopsy was authored in 2020-2021 by Graham Wakefield.  Copyright 2021 Electrosmith, Corp. and Graham Wakefield.
+Oopsy was authored in 2020-2021 by Graham Wakefield and adapted for RNBo by Stefan Brunner.
+Copyright 2021 Electrosmith, Corp. and Graham Wakefield and Stefan Brunner
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 
@@ -12,31 +13,15 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 */
 
 #include "daisy.h"
-#include "genlib.h"
-#include "genlib_ops.h"
-#include "genlib_exportfunctions.h"
+#include "RNBO_PatcherInterface.h"
+#include "RNBO_MinimalEngine.h"
 #include "daisy_seed.h"
-
-#include <math.h>
-#include <string>
-#include <cstring> // memset
-#include <stdarg.h> // vprintf
-
-// #if defined(OOPSY_TARGET_SEED)
-// 	typedef struct {
-// 		daisy::DaisySeed seed;
-
-// 		void Init() {
-// 			seed.Configure();
-// 			seed.Init();
-// 		}
-// 	} Daisy;
-// #endif
+#include "tlsf.h"
 
 #ifdef OOPSY_USE_USB_SERIAL_INPUT
-static char   sumbuff[1024];
-static uint32_t  rx_size = 0;
-static bool      update = false;
+static char sumbuff[1024];
+static uint32_t rx_size = 0;
+static bool update = false;
 #endif
 
 // A temproary measure to preserve Field compatibility
@@ -56,88 +41,81 @@ static bool      update = false;
 #define OOPSY_DISPLAY_PERIOD_MS 10
 #define OOPSY_SCOPE_MAX_ZOOM (8)
 
-// when using USB Midi we have to take the place that the USB MidiHandler needs to
-// operate into account
-#ifdef OOPSY_TARGET_USES_MIDI_USB
-static const uint32_t OOPSY_SRAM_SIZE = 448 * 1024;
-#else
-static const uint32_t OOPSY_SRAM_SIZE = 512 * 1024;
-#endif // OOPSY_TARGET_USES_MIDI_USB
 static const uint32_t OOPSY_SDRAM_SIZE = 64 * 1024 * 1024;
 
-// Added dedicated global SDFile to replace old global from libDaisy
-FIL SDFile;
+// implement our custom allocation methods, which are just re-directing all calls to
+// a simple pool based allocator
+tlsf_t rnboPool;
 
-namespace oopsy {
+char DSY_SDRAM_BSS sdram_pool[OOPSY_SDRAM_SIZE];
 
-	uint32_t sram_used = 0, sram_usable = 0;
-	uint32_t sdram_used = 0, sdram_usable = 0;
-	char * sram_pool = nullptr;
-	char DSY_SDRAM_BSS sdram_pool[OOPSY_SDRAM_SIZE];
+#ifdef OOPSY_TARGET_USES_SDMMC
+// These objects contain 512-byte sector buffers that the SDMMC1 IDMA writes to directly.
+// With APP_TYPE=BOOT_SRAM the default .bss section lands in DTCMRAM, which the SDMMC1 IDMA
+// cannot access, causing FR_DISK_ERR (1). The .axisram_bss section places them in AXI SRAM
+// (0x24000000) which is the only memory the SDMMC1 IDMA can reach.
+__attribute__((section(".axisram_bss"))) FIL SDFile;
+__attribute__((section(".axisram_bss"))) daisy::FatFSInterface fsi;
+#endif
+
+namespace RNBO
+{
+	namespace Platform
+	{
+
+		void *malloc(size_t size)
+		{
+			return tlsf_malloc(rnboPool, size);
+		}
+
+		void free(void *ptr)
+		{
+			tlsf_free(rnboPool, ptr);
+		}
+
+		void *realloc(void *ptr, size_t size)
+		{
+			return tlsf_realloc(rnboPool, ptr, size);
+		}
+
+		void *calloc(size_t count, size_t size)
+		{
+			auto mem = malloc(count * size);
+			memset(mem, 0, count * size);
+			return mem;
+		}
+
+		static void printMessage(const char *message)
+		{
+			daisy::Logger<daisy::LOGGER_INTERNAL>::PrintLine("%s", message);
+		}
+
+		static void printErrorMessage(const char *message)
+		{
+			printMessage(message);
+		}
+	}
+}
+
+namespace oopsy
+{
 
 	void init() {
-		if (!sram_pool) sram_pool = (char *)malloc(OOPSY_SRAM_SIZE);
-		// There's no guarantee the allocation will actually be
-		// of size "OOPSY_SRAM_SIZE," so this just clamps the
-		// usable space to what it really is.
-		sram_usable = (0x24080000 - 1024) - ((size_t) sram_pool);
-		sram_used = 0;
-		sdram_usable = OOPSY_SDRAM_SIZE;
-		sdram_used = 0;
+		// directly use the base address of the SDRAM as a pool, see:
+		// https://electro-smith.github.io/libDaisy/md_doc_2md_2__a6___getting-_started-_external-_s_d_r_a_m.html
+		rnboPool = tlsf_create_with_pool(&sdram_pool, OOPSY_SDRAM_SIZE);
 	}
 
-	void * allocate(uint32_t size) {
-		if (size < sram_usable) {
-			void * p = sram_pool + sram_used;
-			sram_used += size;
-			sram_usable -= size;
-			return p;
-		} else if (size < sdram_usable) {
-			void * p = sdram_pool + sdram_used;
-			sdram_used += size;
-			sdram_usable -= size;
-			return p;
-		}
-		return nullptr;
-	}	
-
-	void memset(void *p, int c, long size) {
-		char *p2 = (char *)p;
-		int i;
-		for (i = 0; i < size; i++, p2++) *p2 = char(c);
-	}
-
-	// void genlib_memcpy(void *dst, const void *src, long size) {
-	// 	char *s2 = (char *)src;
-	// 	char *d2 = (char *)dst;
-	// 	int i;
-	// 	for (i = 0; i < size; i++, s2++, d2++)
-	// 		*d2 = *s2;
-	// }
-
-	// void test() {
-	// 	// memory test:
-	// 	size_t allocated = 0;
-	// 	size_t sz = 256;
-	// 	int i;
-	// 	while (sz < 515) {
-	// 		sz++;
-	// 		void * m = malloc(sz * 1024);
-	// 		if (!m) break;
-	// 		free(m);
-	// 		log("%d: malloced %dk", i, sz);
-	// 		i++;
-	// 	}
-	// 	log("all OK");
-	// }
-
-	struct Timer {
-		int32_t period = OOPSY_DISPLAY_PERIOD_MS, 
+	struct Timer
+	{
+		int32_t period = OOPSY_DISPLAY_PERIOD_MS,
 				t = OOPSY_DISPLAY_PERIOD_MS;
 
-		bool ready(int32_t dt) {
+		bool ready(int32_t dt)
+		{
 			t += dt;
-			if (t > period) {
+			if (t > period)
+			{
 				t = 0;
 				return true;
 			}
@@ -163,64 +141,8 @@ namespace oopsy {
 		MODE_COUNT
 	} Mode;
 
-
-	template<class Transport>
-	class GenMidiHandler {
-
-	public:
-		GenMidiHandler() {}
-		~GenMidiHandler() {}
-		
-		template<typename T> void Init(T config) {
-			_transport.Init(config);
-		}
-
-		void StartReceive()
-		{
-			_transport.StartRx(GenMidiHandler::dataCallback, this);
-		}
-
-		void Listen() {
-			if(!_transport.RxActive()) {
-				_transport.FlushRx();
-				StartReceive();
-			}
-		}
-
-		void SendMessage(uint8_t* bytes, size_t size) {
-			_transport.Tx(bytes, size);
-		}
-
-		void addData(uint8_t* data, size_t size) {
-			while (size) {
-				_queue.PushBack(*data);
-				data++;
-				size--;
-			}
-		}
-
-		bool hasData() const {
-			return _queue.GetNumElements() > 0;
-		}
-
-	    uint8_t popData() { return _queue.PopFront(); }
-
-	private:
-
-		Transport _transport;
-		daisy::FIFO<uint8_t, 1024> _queue;
-
-		static void dataCallback(uint8_t* data, size_t size, void* context)
-		{
-			GenMidiHandler* handler = reinterpret_cast<GenMidiHandler*>(context);
-			handler->addData(data, size);
-		}
-	};
-
-	using GenMidiUartHandler = GenMidiHandler<daisy::MidiUartTransport>;
-	using GenMidiUsbHandler  = GenMidiHandler<daisy::MidiUsbTransport>;
-
-	struct GenDaisy {
+	struct RNBODaisy
+	{
 
 		Daisy hardware;
 		#ifdef OOPSY_SOM_PETAL_SM
@@ -251,7 +173,7 @@ namespace oopsy {
 		Timer uitimer;
 
 		// percent (0-100) of available processing time used
-		float audioCpuUsage = 0; 
+		float audioCpuUsage = 0;
 
 		void (*mainloopCallback)(uint32_t t, uint32_t dt);
 		void (*displayCallback)(uint32_t t, uint32_t dt);
@@ -259,7 +181,7 @@ namespace oopsy {
 		void (*paramCallback)(int idx, char * label, int len, bool tweak);
 		#endif
 		void * app = nullptr;
-		void * gen = nullptr;
+		RNBO::PatcherInterface *rnbo = nullptr;
 		bool nullAudioCallbackRunning = false;
 		
 		#ifdef OOPSY_TARGET_HAS_OLED
@@ -291,68 +213,12 @@ namespace oopsy {
 		char scope_label[11];
 		#endif // OOPSY_TARGET_HAS_OLED
 
-		#if defined(OOPSY_TARGET_USES_MIDI_UART) || defined(OOPSY_TARGET_USES_MIDI_USB)
-
-		struct MidiNote {
-			uint8_t chan, pitch, vel, press;
-
-			void init() {
-				chan = 0;
-				pitch = 36;
-				vel = press = 0;
-			}
-
-			// call at block rate
-			// (so long as at least velocity out is defined)
-			void update(GenDaisy& daisy, uint8_t v, uint8_t p=36, uint8_t c=0) {
-				// a change of pitch or chan must stop an ongoing note
-				if (vel && (p != pitch || c != chan)) {
-					// send note off to stop old note
-					vel = 0;
-					daisy.midi_message3(144 + chan, pitch, vel);
-				}
-				pitch = p;
-				chan = c;
-				// a change of velocity between zero and nonzero should trigger a note on/off
-				if ((!v) != (!vel)) {
-					daisy.midi_message3(144 + chan, pitch, v);
-				}
-				vel = v;
-			}
-
-			// call in the throttled section (if a pressure output was defined)
-			void update_pressure(GenDaisy& daisy, uint8_t pressure) {
-				if (vel && pressure != press) {
-					// send pressure
-					daisy.midi_message3(160 + chan, pitch, pressure);
-				}
-				press = pressure;
-			}
-		};
-
-		struct {
-			uint8_t status=0;
-			uint8_t lastbyte=0;
-			uint8_t byte[2];
-		} midi;
-
-		uint8_t midi_in_written = 0;
-		uint8_t midi_in_active = 0;
-		uint8_t midi_out_active = 0;
-
-		float midi_in_data[OOPSY_BLOCK_SIZE];
-		int midi_data_idx = 0;
-
-
-		#endif // OOPSY_TARGET_USES_MIDI_UART || OOPSY_TARGET_USES_MIDI_USB
-
-		#ifdef OOPSY_TARGET_USES_MIDI_UART
-		GenMidiUartHandler midihandler;
-		#endif //OOPSY_TARGET_USES_MIDI_UART
-
-		#ifdef OOPSY_TARGET_USES_MIDI_USB
-		GenMidiUsbHandler midihandler;
-		#endif // OOPSY_TARGET_USES_MIDI_USB
+#ifdef OOPSY_TARGET_USES_MIDI_UART
+		daisy::MidiUartHandler midihandler;
+#endif // OOPSY_TARGET_USES_MIDI_UART
+#ifdef OOPSY_TARGET_USES_MIDI_USB
+		daisy::MidiUsbHandler midihandler;
+#endif
 
 		#ifdef OOPSY_TARGET_USES_SDMMC
 		struct WavFormatChunk {
@@ -369,110 +235,138 @@ namespace oopsy {
 		#define OOPSY_WAV_WORKSPACE_BYTES (256)
 
 		daisy::SdmmcHandler handler;
-		daisy::FatFSInterface fsi;
+		// fsi is a file-scope global (see .axisram_bss section above namespace oopsy)
 
 		uint8_t workspace[OOPSY_WAV_WORKSPACE_BYTES];
-		
+
 		void sdcard_init() {
+			daisy::System::Delay(100); // allow SD card power-up time
 			daisy::SdmmcHandler::Config sdconfig;
-			sdconfig.Defaults(); // 4-bit, 50MHz
-			// sdconfig.clock_powersave = false;
-			// sdconfig.speed           = daisy::SdmmcHandler::Speed::FAST;
-			sdconfig.width           = daisy::SdmmcHandler::BusWidth::BITS_1;
+			sdconfig.Defaults();
+			sdconfig.speed = daisy::SdmmcHandler::Speed::STANDARD; // 25MHz
+			sdconfig.width = daisy::SdmmcHandler::BusWidth::BITS_1;
 			handler.Init(sdconfig);
 			fsi.Init(daisy::FatFSInterface::Config::MEDIA_SD);
-			f_mount(&fsi.GetSDFileSystem(), fsi.GetSDPath(), 1);
+			FRESULT mountres = f_mount(&fsi.GetSDFileSystem(), fsi.GetSDPath(), 1);
+			log("sd mount %d path %s", (int)mountres, fsi.GetSDPath());
 		}
 
-		// TODO: resizing without wasting memory
-		int sdcard_load_wav(const char * filename, Data& gendata) {
-			float * buffer = gendata.mData;
-			size_t buffer_frames = gendata.dim;
-			size_t buffer_channels = gendata.channels;
+		template<typename PatcherType>
+		int sdcard_load_wav_rnbo(const char *filename, PatcherType* patcher, int dataref_idx)
+		{
+			RNBO::DataRef* ref = patcher->getDataRef(dataref_idx);
+			if (!ref || ref->isInternal()) return -1;
+
+			// ---- WAV header parsing ----
 			size_t bytesread = 0;
 			WavFormatChunk format;
 			uint32_t header[3];
-			uint32_t marker, frames, chunksize, frames_per_read, frames_to_read, frames_read, total_frames_to_read;
-			uint32_t buffer_index = 0;
+			uint32_t marker, chunksize;
 			size_t bytespersample;
-			if(f_open(&SDFile, filename, (FA_OPEN_EXISTING | FA_READ)) != FR_OK) {
-				log("no %s", filename);
+
+			FRESULT fres = f_open(&SDFile, filename, (FA_OPEN_EXISTING | FA_READ));
+			if (fres != FR_OK)
+			{
+				log("no %s err %d", filename, (int)fres);
 				return -1;
 			}
-			if (f_eof(&SDFile) 
-				|| f_read(&SDFile, (void *)&header, sizeof(header), &bytesread) != FR_OK
-				|| header[0] != daisy::kWavFileChunkId 
-				|| header[2] != daisy::kWavFileWaveId) goto badwav;
+			if (f_eof(&SDFile) || f_read(&SDFile, (void *)&header, sizeof(header), &bytesread) != FR_OK || header[0] != daisy::kWavFileChunkId || header[2] != daisy::kWavFileWaveId)
+				goto badwav_rnbo;
 			// find the format chunk:
-			do {
-				if (f_eof(&SDFile) || f_read(&SDFile, (void *)&marker, sizeof(marker), &bytesread) != FR_OK) break;
+			do
+			{
+				if (f_eof(&SDFile) || f_read(&SDFile, (void *)&marker, sizeof(marker), &bytesread) != FR_OK)
+					break;
 			} while (marker != daisy::kWavFileSubChunk1Id);
-			if (f_eof(&SDFile) 
-				|| f_read(&SDFile, (void *)&format, sizeof(format), &bytesread) != FR_OK
-				|| format.chans == 0 
-				|| format.samplerate == 0 
-				|| format.bitspersample == 0) goto badwav;
+			if (f_eof(&SDFile) || f_read(&SDFile, (void *)&format, sizeof(format), &bytesread) != FR_OK || format.chans == 0 || format.samplerate == 0 || format.bitspersample == 0)
+				goto badwav_rnbo;
+			// Skip any extra bytes in the fmt chunk beyond the 16 we read.
+			// Many DAWs write size=18 (adding cbSize=0). Without this skip the
+			// data-chunk search starts mid-chunk and never finds "data".
+			if (format.size > 16)
+				f_lseek(&SDFile, f_tell(&SDFile) + (format.size - 16));
 			// find the data chunk:
-			do {
-				if (f_eof(&SDFile) || f_read(&SDFile, (void *)&marker, sizeof(marker), &bytesread) != FR_OK) break;
+			do
+			{
+				if (f_eof(&SDFile) || f_read(&SDFile, (void *)&marker, sizeof(marker), &bytesread) != FR_OK)
+					break;
 			} while (marker != daisy::kWavFileSubChunk2Id);
 			bytespersample = format.bytesperframe / format.chans;
-			if (f_eof(&SDFile) 
-				|| f_read(&SDFile, (void *)&chunksize, sizeof(chunksize), &bytesread) != FR_OK
-				|| format.format != 1 
-				|| bytespersample < 2 
-				|| bytespersample > 4) goto badwav; // only 16/24/32-bit PCM, sorry
-			// make sure we read in (multiples of) whole frames
-			frames = chunksize / format.bytesperframe;
-			frames_per_read = OOPSY_WAV_WORKSPACE_BYTES / format.bytesperframe;
-			frames_to_read = frames_per_read;
-			total_frames_to_read = buffer_frames;
-			// log("b=%u c=%u t=%u", buffer_frames, buffer_channels, total_frames_to_read);
-			// log("f=%u c=%u p=%u", frames, format.chans, frames_per_read);
-			// log("bp=%u c=%u p=%u", frames_to_read * format.bytesperframe);
-			do {
-				if (frames_to_read > total_frames_to_read) frames_to_read = total_frames_to_read;
-				f_read(&SDFile, workspace, frames_to_read * format.bytesperframe, &bytesread);
-				frames_read = bytesread / format.bytesperframe;
-				//log("_r=%u t=%u", frames_read, frames_to_read);
-				switch (bytespersample) {
-					case 2:  { // 16 bit
-						for (size_t f=0; f<frames_read; f++) {
-							for (size_t c=0; c<buffer_channels; c++) {
-								uint8_t * frame = workspace + f*format.bytesperframe + (c % format.chans)*bytespersample;
-								buffer[(buffer_index+f)*buffer_channels + c] = ((int16_t *)frame)[0] * 0.000030517578125f;
-							}
-						}
-					} break;
-					case 3: { // 24 bit
-						for (size_t f=0; f<frames_read; f++) {
-							for (size_t c=0; c<buffer_channels; c++) {
-								uint8_t * frame = workspace + f*format.bytesperframe + (c % format.chans)*bytespersample;
-								int32_t b = (int32_t)(
-									((uint32_t)(frame[0]) <<  8) | 
-									((uint32_t)(frame[1]) << 16) | 
-									((uint32_t)(frame[2]) << 24)
-								) >> 8;
-								buffer[(buffer_index+f)*buffer_channels + c] = (float)(((double)b) * 0.00000011920928955078125);
-							}
-						}
-					} break;
-					case 4: { // 32 bit
-						for (size_t f=0; f<frames_read; f++) {
-							for (size_t c=0; c<buffer_channels; c++) {
-								uint8_t * frame = workspace + f*format.bytesperframe + (c % format.chans)*bytespersample;
-								buffer[(buffer_index+f)*buffer_channels + c] = ((int32_t *)frame)[0] / 2147483648.f;
-							}
-						}
-					} break;
+			if (f_eof(&SDFile) || f_read(&SDFile, (void *)&chunksize, sizeof(chunksize), &bytesread) != FR_OK || format.format != 1 || bytespersample < 2 || bytespersample > 4)
+				goto badwav_rnbo; // only 16/24/32-bit PCM
+			{
+				// ---- Allocate SDRAM for decoded float samples ----
+				// buffer~ may have no declared size, so ref->getData() may be null.
+				// RNBO::Platform::malloc routes through the TLSF SDRAM pool (rnbo_daisy.h).
+				uint32_t frames         = chunksize / format.bytesperframe;
+				size_t buffer_channels  = format.chans;
+				size_t alloc_size       = frames * buffer_channels * sizeof(float);
+				float *buffer           = (float *)RNBO::Platform::malloc(alloc_size);
+				if (!buffer)
+				{
+					log("oom %s", filename);
+					f_close(&SDFile);
+					return -1;
 				}
-				total_frames_to_read -= frames_read;
-				buffer_index += frames_read;
-			} while (!f_eof(&SDFile) && bytesread > 0 && total_frames_to_read > 0);
-			f_close(&SDFile);
-			log("read %s", filename);
-			return buffer_index;
-		badwav:
+
+				// ---- Load WAV samples in chunks ----
+				uint32_t frames_per_read      = OOPSY_WAV_WORKSPACE_BYTES / format.bytesperframe;
+				uint32_t frames_to_read       = frames_per_read;
+				uint32_t total_frames_to_read = frames;
+				uint32_t buffer_index         = 0;
+				size_t   frames_read;
+				do
+				{
+					if (frames_to_read > total_frames_to_read)
+						frames_to_read = total_frames_to_read;
+					f_read(&SDFile, workspace, frames_to_read * format.bytesperframe, &bytesread);
+					frames_read = bytesread / format.bytesperframe;
+					switch (bytespersample)
+					{
+					case 2: // 16 bit
+						for (size_t f = 0; f < frames_read; f++)
+							for (size_t c = 0; c < buffer_channels; c++)
+							{
+								uint8_t *frame = workspace + f * format.bytesperframe + (c % format.chans) * bytespersample;
+								buffer[(buffer_index + f) * buffer_channels + c] = ((int16_t *)frame)[0] * 0.000030517578125f;
+							}
+						break;
+					case 3: // 24 bit
+						for (size_t f = 0; f < frames_read; f++)
+							for (size_t c = 0; c < buffer_channels; c++)
+							{
+								uint8_t *frame = workspace + f * format.bytesperframe + (c % format.chans) * bytespersample;
+								int32_t b = (int32_t)(((uint32_t)(frame[0]) << 8) |
+													  ((uint32_t)(frame[1]) << 16) |
+													  ((uint32_t)(frame[2]) << 24)) >> 8;
+								buffer[(buffer_index + f) * buffer_channels + c] = (float)(((double)b) * 0.00000011920928955078125);
+							}
+						break;
+					case 4: // 32 bit
+						for (size_t f = 0; f < frames_read; f++)
+							for (size_t c = 0; c < buffer_channels; c++)
+							{
+								uint8_t *frame = workspace + f * format.bytesperframe + (c % format.chans) * bytespersample;
+								buffer[(buffer_index + f) * buffer_channels + c] = ((int32_t *)frame)[0] / 2147483648.f;
+							}
+						break;
+					}
+					total_frames_to_read -= frames_read;
+					buffer_index         += frames_read;
+				} while (!f_eof(&SDFile) && bytesread > 0 && total_frames_to_read > 0);
+
+				f_close(&SDFile);
+				log("read %s", filename);
+
+				// ---- Hand buffer to RNBO ----
+				// deAlloc=true: RNBO takes ownership; freed by ~DataRef() on teardown or by the
+				// next setData() call. This is the official pattern (see deserializeBuffer in RNBO_DataRef.h).
+				ref->setData((char *)buffer, alloc_size, true);
+				ref->setType(RNBO::Float32AudioBuffer(buffer_channels, format.samplerate));
+				patcher->processDataViewUpdate(dataref_idx, RNBO::RNBOTimeNow);
+				return (int)buffer_index;
+			}
+		badwav_rnbo:
 			f_close(&SDFile);
 			log("bad %s", filename);
 			return -1;
@@ -500,16 +394,16 @@ namespace oopsy {
 			#endif
 
 			som->ChangeAudioCallback(newapp.staticAudioCallback);
-			log("gen~ %s", appdefs[app_selected].name);
-			log("SR %dkHz / %dHz", (int)(som->AudioSampleRate()/1000), (int)som->AudioCallbackRate());
+			log("RNBO %s", appdefs[app_selected].name);
+			log("SR %dkHz / %dHz", (int)(som->AudioSampleRate() / 1000), (int)som->AudioCallbackRate());
 			{
-				log("%d%s/%dKB+%d%s/%dMB", 
-					oopsy::sram_used > 1024 ? oopsy::sram_used/1024 : oopsy::sram_used, 
-					(oopsy::sram_used > 1024 || oopsy::sram_used == 0) ? "" : "B", 
-					OOPSY_SRAM_SIZE/1024, 
-					oopsy::sdram_used > 1048576 ? oopsy::sdram_used/1048576 : oopsy::sdram_used/1024, 
-					(oopsy::sdram_used > 1048576 || oopsy::sdram_used == 0) ? "" : "KB", 
-					OOPSY_SDRAM_SIZE/1048576);
+				// log("%d%s/%dKB+%d%s/%dMB", 
+				// 	oopsy::sram_used > 1024 ? oopsy::sram_used/1024 : oopsy::sram_used, 
+				// 	(oopsy::sram_used > 1024 || oopsy::sram_used == 0) ? "" : "B", 
+				// 	OOPSY_SRAM_SIZE/1024, 
+				// 	oopsy::sdram_used > 1048576 ? oopsy::sdram_used/1048576 : oopsy::sdram_used/1024, 
+				// 	(oopsy::sdram_used > 1048576 || oopsy::sdram_used == 0) ? "" : "KB", 
+				// 	OOPSY_SDRAM_SIZE/1048576);
 				// console_display();
 				// hardware.display.Update();
 			}
@@ -518,15 +412,6 @@ namespace oopsy {
 			menu_button_incr = 0;
 			#if defined(OOPSY_TARGET_SEED)
 			hardware.menu_rotate = 0;
-			#endif
-			#if defined(OOPSY_TARGET_USES_MIDI_UART) || defined(OOPSY_TARGET_USES_MIDI_USB)
-			midi_data_idx = 0;
-			midi_in_written = 0;
-			midi_in_active = 0;
-			midi_out_active = 0;
-			// reset:
-			midi_message1(255);
-			midi_message3(176, 123, 0);
 			#endif
 			blockcount = 0;
 		}
@@ -539,7 +424,47 @@ namespace oopsy {
 		}
 		#endif
 
-		int run(AppDef * appdefs, int count) {
+		void HandleMidiMessage(daisy::MidiEvent m)
+		{
+			if (m.type < daisy::MidiMessageType::SystemCommon)
+			{
+				uint8_t midiData[3];
+				switch (m.type)
+				{
+				case daisy::NoteOff:
+					midiData[0] = 0x80 + m.channel;
+					break;
+				case daisy::NoteOn:
+					midiData[0] = 0x90 + m.channel;
+					break;
+				case daisy::PolyphonicKeyPressure:
+					midiData[0] = 0xA0 + m.channel;
+					break;
+				case daisy::ControlChange:
+					midiData[0] = 0xB0 + m.channel;
+					break;
+				case daisy::ProgramChange:
+					midiData[0] = 0xC0 + m.channel;
+					schedule_app_load(m.data[0]);
+					break;
+				case daisy::ChannelPressure:
+					midiData[0] = 0xD0 + m.channel;
+					break;
+				case daisy::PitchBend:
+					midiData[0] = 0xE0 + m.channel;
+					break;
+				default:
+					break;
+				}
+
+				midiData[1] = m.data[0];
+				midiData[2] = m.data[1];
+
+				rnbo->processMidiEvent(RNBO::RNBOTimeNow, 0, midiData, 3);
+			}
+		}
+
+		int run(AppDef *appdefs, int count) {
 			this->appdefs = appdefs;
 			app_count = count;
 			mode = 0;
@@ -558,7 +483,7 @@ namespace oopsy {
 			// TODO REMOVE THIS HACK WHEN STARTING SERIAL OVER USB DOESN'T FREAK OUT WITH AUDIO CALLBACK
 			daisy::System::Delay(275);
 			#endif
-			
+
 			#ifdef OOPSY_TARGET_HAS_OLED
 			console_cols = OOPSY_OLED_DISPLAY_WIDTH / font.FontWidth + 1; // +1 to accommodate null terminators.
 			console_rows = OOPSY_OLED_DISPLAY_HEIGHT / font.FontHeight; 
@@ -570,23 +495,15 @@ namespace oopsy {
 			console_line = console_rows-1;
 			#endif
 
-			#ifdef OOPSY_TARGET_USES_MIDI_UART
-			midi_data_idx = 0;
-			midi_in_written = 0;
-			midi_in_active = 0;
-			midi_out_active = 0;
-			daisy::MidiUartTransport::Config midi_cfg;
+#ifdef OOPSY_TARGET_USES_MIDI_UART
+			daisy::MidiUartHandler::Config midi_cfg;
 			midihandler.Init(midi_cfg);
-			#endif
-			#ifdef OOPSY_TARGET_USES_MIDI_USB
-			midi_data_idx = 0;
-			midi_in_written = 0;
-			midi_in_active = 0;
-			midi_out_active = 0;
-			daisy::MidiUsbTransport::Config midi_cfg;
-			midi_cfg.periph = daisy::MidiUsbTransport::Config::INTERNAL;
+#endif
+#ifdef OOPSY_TARGET_USES_MIDI_USB
+			daisy::MidiUsbHandler::Config midi_cfg;
+			midi_cfg.transport_config.periph = daisy::MidiUsbTransport::Config::INTERNAL;
 			midihandler.Init(midi_cfg);
-			#endif
+#endif
 
 			som->StartAudio(nullAudioCallback);
 			mainloopCallback = nullMainloopCallback;
@@ -618,12 +535,13 @@ namespace oopsy {
 					appdefs[app_selected].load();
 					continue;
 				}
-				
+
 				// handle app-level code (e.g. for CV/gate outs)
 				mainloopCallback(t, dt);
 #if defined(OOPSY_TARGET_USES_MIDI_UART) || defined(OOPSY_TARGET_USES_MIDI_USB)
 				midihandler.Listen();
-#endif				
+#endif
+
 				if (uitimer.ready(dt)) {
 					#ifdef OOPSY_USE_LOGGING
 						som->PrintLine("the time is"FLT_FMT3"", FLT_VAR3(t/1000.f));
@@ -646,7 +564,7 @@ namespace oopsy {
 
 					if (menu_button_held_ms > OOPSY_LONG_PRESS_MS) {
 						is_mode_selecting = 1;
-					} 
+					}
 					#ifdef OOPSY_TARGET_PETAL
 					// has no mode selection
 					is_mode_selecting = 0;
@@ -727,8 +645,8 @@ namespace oopsy {
 					#endif //OOPSY_HAS_PARAM_VIEW
 					#endif //OOPSY_TARGET_HAS_OLED
 					}
-				
-					// SHORT PRESS	
+
+					// SHORT PRESS
 					if (menu_button_released) {
 						menu_button_released = 0;
 						if (is_mode_selecting) {
@@ -753,7 +671,7 @@ namespace oopsy {
 						#endif //OOPSY_HAS_PARAM_VIEW && OOPSY_CAN_PARAM_TWEAK
 						#endif //OOPSY_TARGET_HAS_OLED
 						}
-					} 
+					}
 
 					// OLED DISPLAY:
 					#ifdef OOPSY_TARGET_HAS_OLED
@@ -894,9 +812,7 @@ namespace oopsy {
 					} 
 					if (showstats) {
 						int offset = 0;
-						#if defined(OOPSY_TARGET_USES_MIDI_UART) || defined(OOPSY_TARGET_USES_MIDI_USB)
-						offset += snprintf(console_stats+offset, console_cols-offset, "%c%c", midi_in_active ? '<' : ' ', midi_out_active ? '>' : ' ');
-						midi_in_active = midi_out_active = 0;
+						#ifdef OOPSY_TARGET_USES_MIDI_UART
 						#endif
 						offset += snprintf(console_stats+offset, console_cols-offset, "%02d%%", int(audioCpuUsage));
 						// stats:
@@ -917,7 +833,7 @@ namespace oopsy {
 					hardware.led_driver.SwapBuffersAndTransmit();
 					#endif //(OOPSY_TARGET_PETAL)
 				} // uitimer.ready
-				
+
 			}
 			return 0;
 		}
@@ -928,14 +844,15 @@ namespace oopsy {
 		}
 
 		void audio_preperform(size_t size) {
-			#if defined(OOPSY_TARGET_USES_MIDI_UART) || defined(OOPSY_TARGET_USES_MIDI_USB)
-			// fill remainder of midi buffer with non-data:
-			for (size_t i=midi_in_written; i<size; i++) midi_in_data[i] = -0.1f;
-			// done with midi input:
-			midi_in_written = 0;
-			#endif
 
 			hardware.ProcessAllControls();
+
+#if defined(OOPSY_TARGET_USES_MIDI_UART) || defined(OOPSY_TARGET_USES_MIDI_USB)
+			while (midihandler.HasEvents())
+			{
+				HandleMidiMessage(midihandler.PopEvent());
+			}
+#endif
 
 			#if defined(OOPSY_TARGET_SEED)
 			menu_button_incr += hardware.menu_rotate;
@@ -1011,7 +928,7 @@ namespace oopsy {
 			}
 		}
 
-		GenDaisy& console_display() {
+		RNBODaisy &console_display() {
 			for (int i=0; i<console_rows; i++) {
 				hardware.display.SetCursor(0, font.FontHeight * i);
 				hardware.display.WriteString(console_lines[(i+console_line) % console_rows], font, true);
@@ -1020,40 +937,26 @@ namespace oopsy {
 		}
 		#endif // OOPSY_TARGET_HAS_OLED
 
-		GenDaisy& log(const char * fmt, ...) {
-			#ifdef OOPSY_TARGET_HAS_OLED
+		RNBODaisy &log(const char *fmt, ...)
+		{
+#ifdef OOPSY_TARGET_HAS_OLED
 			va_list argptr;
 			va_start(argptr, fmt);
 			vsnprintf(console_lines[console_line], console_cols, fmt, argptr);
 			va_end(argptr);
 			console_line = (console_line + 1) % console_rows;
-			#endif
+#else
+#ifdef OOPSY_USE_LOGGING
+			char log_buf[128];
+			va_list argptr;
+			va_start(argptr, fmt);
+			vsnprintf(log_buf, sizeof(log_buf), fmt, argptr);
+			va_end(argptr);
+			som->PrintLine("%s", log_buf);
+#endif
+#endif
 			return *this;
 		}
-
-		#if defined(OOPSY_TARGET_USES_MIDI_UART) || defined(OOPSY_TARGET_USES_MIDI_USB)
-
-		void midi_message1(uint8_t byte) {
-			uint8_t bytes[1];
-			bytes[0] = (uint8_t)byte;
-			midihandler.SendMessage(bytes, 1);
-		}
-
-		void midi_message2(uint8_t status, uint8_t b1) {
-			uint8_t bytes[2];
-			bytes[0] = (uint8_t)status;
-			bytes[1] = (uint8_t)b1;
-			midihandler.SendMessage(bytes, 2);
-		}
-
-		void midi_message3(uint8_t status, uint8_t b1, uint8_t b2) {
-			uint8_t bytes[3];
-			bytes[0] = (uint8_t)status;
-			bytes[1] = (uint8_t)b1;
-			bytes[2] = (uint8_t)b2;
-			midihandler.SendMessage(bytes, 3);
-		}
-		#endif //OOPSY_TARGET_USES_MIDI_UART || OOPSY_TARGET_USES_MIDI_USB
 
 		// TODO -- need better way to handle this to avoid hardcoding
 		#if (OOPSY_TARGET_FIELD)
@@ -1075,7 +978,7 @@ namespace oopsy {
 		static void nullMainloopCallback(uint32_t t, uint32_t dt) {}
 	} daisy;
 
-	void GenDaisy::nullAudioCallback(daisy::AudioHandle::InputBuffer ins, daisy::AudioHandle::OutputBuffer outs, size_t size) {
+	void RNBODaisy::nullAudioCallback(daisy::AudioHandle::InputBuffer ins, daisy::AudioHandle::OutputBuffer outs, size_t size) {
 		daisy.nullAudioCallbackRunning = true;
 		// zero audio outs:
 		for (int i=0; i<OOPSY_IO_COUNT; i++) {
@@ -1083,11 +986,19 @@ namespace oopsy {
 		}
 	}
 
-
 	// Curiously-recurring template to make App definitions simpler:
-	template<typename T>
+	template <typename T>
 	struct App {
-		
+
+		RNBO::PatcherInterface *rnbo;
+
+		float setParamIfChanged(RNBO::ParameterIndex index, float oldValue, float newValue) {
+			if (newValue != oldValue) {
+				rnbo->setParameterValue(index, newValue, RNBO::RNBOTimeNow);
+			}
+			return newValue;
+		}
+
 		static void staticMainloopCallback(uint32_t t, uint32_t dt) {
 			T& self = *(T *)daisy.app;
 			self.mainloopCallback(daisy, t, dt);
@@ -1099,15 +1010,15 @@ namespace oopsy {
 		}
 
 		static void staticAudioCallback(daisy::AudioHandle::InputBuffer hardware_ins, daisy::AudioHandle::OutputBuffer hardware_outs, size_t size) {
-			uint32_t start = daisy::System::GetUs(); 
+			uint32_t start = daisy::System::GetUs();
 			daisy.audio_preperform(size);
 			((T *)daisy.app)->audioCallback(daisy, hardware_ins, hardware_outs, size);
 			#if (OOPSY_IO_COUNT == 4)
-			float * buffers[] = {
-				(float *)hardware_ins[0], (float *)hardware_ins[1], (float *)hardware_ins[2], (float *)hardware_ins[3], 
+			float *buffers[] = {
+				(float *)hardware_ins[0], (float *)hardware_ins[1], (float *)hardware_ins[2], (float *)hardware_ins[3],
 				hardware_outs[0], hardware_outs[1], hardware_outs[2], hardware_outs[3]};
 			#else
-			float * buffers[] = {(float *)hardware_ins[0], (float *)hardware_ins[1], hardware_outs[0], hardware_outs[1]};
+			float *buffers[] = {(float *)hardware_ins[0], (float *)hardware_ins[1], hardware_outs[0], hardware_outs[1]};
 			#endif
 			daisy.audio_postperform(buffers, size);
 			// convert elapsed time (us) to CPU percentage (0-100) of available processing time
@@ -1120,31 +1031,42 @@ namespace oopsy {
 		}
 
 		#if defined(OOPSY_TARGET_HAS_OLED) && defined(OOPSY_HAS_PARAM_VIEW)
-		static void staticParamCallback(int idx, char * label, int len, bool tweak) {
+		static void staticParamCallback(int idx, char *label, int len, bool tweak) {
 			T& self = *(T *)daisy.app;
 			self.paramCallback(daisy, idx, label, len, tweak);
 		}
 		#endif //defined(OOPSY_TARGET_HAS_OLED) && defined(OOPSY_HAS_PARAM_VIEW)
 	};
 
-}; // oopsy::
 
-void genlib_report_error(const char *s) { oopsy::daisy.log(s); }
-void genlib_report_message(const char *s) { oopsy::daisy.log(s); }
+	class RNBOEngine : public RNBO::MinimalEngine<>
+	{
+	public:
+		RNBOEngine(RNBO::PatcherInterface* patcher)
+		: RNBO::MinimalEngine<>(patcher)
+		{}
 
-unsigned long genlib_ticks() { 
-	return 0; //daisy::System::GetTick(); 
-}
+#if defined(OOPSY_TARGET_USES_MIDI_UART) || defined(OOPSY_TARGET_USES_MIDI_USB)
+		void sendMidiEvent(int port, int b1, int b2, int b3, RNBO::MillisecondTime time = 0.0) override {
+			uint8_t bytes[3];
+			bytes[0] = (uint8_t)b1;
+			bytes[1] = (uint8_t)b2;
+			bytes[2] = (uint8_t)b3;
 
-t_ptr genlib_sysmem_newptr(t_ptr_size size) {
-	return (t_ptr)oopsy::allocate(size);
-}
+			daisy.midihandler.SendMessage(bytes, 3);
+		}
 
-t_ptr genlib_sysmem_newptrclear(t_ptr_size size) {
-	t_ptr p = genlib_sysmem_newptr(size);
-	if (p) oopsy::memset(p, 0, size);
-	return p;
-}
+		void sendMidiEventList(int port, const RNBO::list& data, RNBO::MillisecondTime time = 0.0) override {
+			uint8_t bytes[RNBO_FIXEDLISTSIZE];
+			const auto listlength = data.length < RNBO_FIXEDLISTSIZE ? data.length : RNBO_FIXEDLISTSIZE;
+			for (size_t i = 0; i < listlength; i++) {
+				bytes[i] = data[i];
+			}
+			daisy.midihandler.SendMessage(bytes, listlength);
+		}
+#endif
+	};
 
+};
 
-#endif //GENLIB_DAISY_H
+#endif // RNBO_DAISY_H

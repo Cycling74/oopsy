@@ -3,7 +3,7 @@
 const path = require("path"), 
 	os = require("os")
 const maxAPI = require("max-api");
-const run = require(path.join(__dirname, "..", "source", "oopsy.js"));
+const run = require(path.join(__dirname, "..", "source", "oopsy.rnbo.js"));
 
 let msgs = []
 
@@ -30,9 +30,7 @@ setInterval(function() {
 	}
 }, 250)
 
-try {
-	run(...process.argv.slice(2))
-
-} catch(e) {
-	maxAPI.post(e.message ? e.message : e, maxAPI.POST_LEVELS.ERROR);
-}
+run(...process.argv.slice(2))
+.catch(error => { 
+	maxAPI.post(error ? error : error, maxAPI.POST_LEVELS.ERROR); 
+});
